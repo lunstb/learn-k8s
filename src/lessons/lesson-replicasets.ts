@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson3: Lesson = {
+export const lessonReplicaSets: Lesson = {
   id: 3,
   title: 'ReplicaSets and Scaling',
   description:

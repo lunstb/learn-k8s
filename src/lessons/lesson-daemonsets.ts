@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
-export const lesson17: Lesson = {
+export const lessonDaemonSets: Lesson = {
   id: 17,
   title: 'DaemonSets',
   description:
@@ -13,9 +13,25 @@ export const lesson17: Lesson = {
   successMessage:
     'The DaemonSet is running one log-collector pod on every node. DaemonSets automatically adapt to cluster changes — ' +
     'when a new node joins, a pod is created; when a node leaves, the pod is cleaned up.',
+  yamlTemplate: `apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: log-collector
+spec:
+  selector:
+    matchLabels:
+      app: log-collector
+  template:
+    metadata:
+      labels:
+        app: log-collector
+    spec:
+      containers:
+      - name: log-collector
+        image: ???`,
   hints: [
-    { text: 'The syntax is: kubectl create daemonset <name> --image=<image>. You don\'t specify replicas — a DaemonSet runs one pod per node automatically.' },
-    { text: 'kubectl create daemonset log-collector --image=fluentd:latest', exact: true },
+    { text: 'Switch to the YAML Editor tab — fill in the image as "fluentd:latest". DaemonSets don\'t need replicas — one pod runs per node automatically.' },
+    { text: 'Or use the terminal: kubectl create daemonset log-collector --image=fluentd:latest', exact: false },
     { text: 'Reconcile multiple times until pods transition from Pending to Running on all nodes.' },
   ],
   goals: [

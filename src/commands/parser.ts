@@ -50,6 +50,15 @@ const RESOURCE_ALIASES: Record<string, string> = {
   horizontalpodautoscalers: 'hpa',
   hpa: 'hpa',
   hpas: 'hpa',
+  pv: 'pv',
+  persistentvolume: 'pv',
+  persistentvolumes: 'pv',
+  pvc: 'pvc',
+  persistentvolumeclaim: 'pvc',
+  persistentvolumeclaims: 'pvc',
+  storageclass: 'storageclass',
+  storageclasses: 'storageclass',
+  sc: 'storageclass',
 };
 
 export function parseCommand(input: string): ParsedCommand | { error: string } {
@@ -406,8 +415,24 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
   }
 
   const validActions = ['create', 'get', 'delete', 'scale', 'describe', 'apply'];
+  const unsupportedCommands: Record<string, string> = {
+    'exec': '"kubectl exec" is not supported in this simulator. Use "kubectl logs <pod>" to inspect pod output.',
+    'port-forward': '"kubectl port-forward" is not supported in this simulator. Use "kubectl get endpoints" to see service connectivity.',
+    'edit': '"kubectl edit" is not supported in this simulator. Use "kubectl patch" or "kubectl set image" to modify resources.',
+    'attach': '"kubectl attach" is not supported in this simulator.',
+    'cp': '"kubectl cp" is not supported in this simulator.',
+    'proxy': '"kubectl proxy" is not supported in this simulator.',
+    'auth': '"kubectl auth" is not supported in this simulator.',
+    'config': '"kubectl config" is not supported in this simulator.',
+    'wait': '"kubectl wait" is not supported in this simulator. Use the Reconcile button to advance cluster state.',
+    'run': '"kubectl run" is not supported. Use "kubectl create pod <name> --image=<image>" instead.',
+    'expose': '"kubectl expose" is not supported. Use "kubectl create service <name> --selector=<sel> --port=<port>" instead.',
+  };
+  if (unsupportedCommands[action]) {
+    return { error: unsupportedCommands[action] };
+  }
   if (!validActions.includes(action)) {
-    return { error: `Unknown command: "${action}". Try: create, get, delete, scale, set image, describe, logs, patch, label, drain, taint, cordon, uncordon, helm` };
+    return { error: `Unknown command: "${action}". Supported: create, get, delete, scale, set image, describe, logs, apply, patch, label, drain, taint, cordon, uncordon, autoscale, rollout, top, helm` };
   }
 
   // Handle "apply -f -" pattern
@@ -440,7 +465,7 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
     if (action === 'get') {
       return { error: 'Usage: kubectl get <resource-type> [name]' };
     }
-    return { error: `Missing resource type. Available: deployment, replicaset, pod, node, service, event, namespace, configmap, secret, ingress, statefulset, daemonset, job, cronjob, hpa` };
+    return { error: `Missing resource type. Available: deployment, replicaset, pod, node, service, event, namespace, configmap, secret, ingress, statefulset, daemonset, job, cronjob, hpa, pv, pvc, storageclass` };
   }
 
   let resourceType: string;
@@ -459,7 +484,7 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
   } else {
     const normalizedType = RESOURCE_ALIASES[resourcePart.toLowerCase()];
     if (!normalizedType) {
-      return { error: `Unknown resource type: "${resourcePart}". Available: deployment (deploy), replicaset (rs), pod (po), node (no), service (svc), event (ev), namespace (ns), configmap (cm), secret, ingress (ing), statefulset (sts), daemonset (ds), job, cronjob (cj), hpa` };
+      return { error: `Unknown resource type: "${resourcePart}". Available: deployment (deploy), replicaset (rs), pod (po), node (no), service (svc), event (ev), namespace (ns), configmap (cm), secret, ingress (ing), statefulset (sts), daemonset (ds), job, cronjob (cj), hpa, pv, pvc, storageclass (sc)` };
     }
     resourceType = normalizedType;
     idx++;
@@ -481,13 +506,16 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
         const [key, ...rest] = flagPart.split('=');
         flags[key] = rest.join('=');
       } else {
-        if (idx + 1 < parts.length && !parts[idx + 1].startsWith('--')) {
+        if (idx + 1 < parts.length && !parts[idx + 1].startsWith('--') && !parts[idx + 1].startsWith('-')) {
           flags[flagPart] = parts[idx + 1];
           idx++;
         } else {
           flags[flagPart] = 'true';
         }
       }
+    } else if (part === '-o' && idx + 1 < parts.length) {
+      flags['o'] = parts[idx + 1];
+      idx++;
     }
     idx++;
   }

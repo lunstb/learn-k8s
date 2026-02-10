@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson5: Lesson = {
+export const lessonServices: Lesson = {
   id: 5,
   title: 'Services and Networking',
   description:
@@ -13,9 +13,19 @@ export const lesson5: Lesson = {
   successMessage:
     'Services dynamically track endpoints. When you scale up, new Running pods automatically become endpoints. ' +
     'Pending pods are excluded — only Running pods matching the selector serve traffic.',
+  yamlTemplate: `apiVersion: v1
+kind: Service
+metadata:
+  name: ???
+spec:
+  selector:
+    app: ???
+  ports:
+  - port: ???
+    targetPort: ???`,
   hints: [
-    { text: 'The syntax for creating a service is: kubectl create service <name> --selector=<key>=<value> --port=<port>' },
-    { text: 'kubectl create service web-svc --selector=app=web-app --port=80', exact: true },
+    { text: 'Switch to the YAML Editor tab — fill in the ??? fields: name should be "web-svc", selector app should match "web-app", and port should be 80.' },
+    { text: 'Or use the terminal: kubectl create service web-svc --selector=app=web-app --port=80', exact: false },
     { text: 'After the service exists, scale the deployment up.' },
     { text: 'kubectl scale deployment web-app --replicas=5', exact: true },
     { text: 'Use kubectl get endpoints to verify all 5 pods are registered.' },

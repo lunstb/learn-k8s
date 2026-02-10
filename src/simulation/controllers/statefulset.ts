@@ -26,7 +26,7 @@ export function reconcileStatefulSets(state: ClusterState): ReconcileResult {
     const desiredCount = sts.spec.replicas;
 
     if (currentCount < desiredCount) {
-      // Determine which ordinals already exist
+      // StatefulSet ordering: don't create next pod until previous ordinal is Running+Ready
       const existingOrdinals = new Set(
         ownedPods.map((p) => {
           const parts = p.metadata.name.split('-');
@@ -45,6 +45,17 @@ export function reconcileStatefulSets(state: ClusterState): ReconcileResult {
 
       if (nextOrdinal === -1) {
         continue;
+      }
+
+      // Enforce ordering: previous ordinal must be Running before creating next
+      if (nextOrdinal > 0) {
+        const prevPod = ownedPods.find((p) => {
+          const parts = p.metadata.name.split('-');
+          return parseInt(parts[parts.length - 1], 10) === nextOrdinal - 1;
+        });
+        if (!prevPod || prevPod.status.phase !== 'Running') {
+          continue; // Wait for previous pod to be Running
+        }
       }
 
       // Create ONE pod per tick (ordered creation)

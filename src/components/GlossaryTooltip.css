@@ -1,0 +1,38 @@
+.glossary-term {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: #475569;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+.glossary-tooltip {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 8px));
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  padding: 8px 12px;
+  max-width: 280px;
+  min-width: 180px;
+  width: max-content;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #e2e8f0;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  text-decoration: none;
+  font-weight: 400;
+  text-align: left;
+}
+
+.glossary-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #475569;
+}

@@ -1,6 +1,6 @@
 import type { Lesson } from './types';
 
-export const lesson22: Lesson = {
+export const lessonRBAC: Lesson = {
   id: 22,
   title: 'RBAC: Role-Based Access Control',
   description:

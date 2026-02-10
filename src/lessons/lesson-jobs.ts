@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
-export const lesson18: Lesson = {
+export const lessonJobs: Lesson = {
   id: 18,
   title: 'Jobs & CronJobs',
   description:
@@ -13,9 +13,22 @@ export const lesson18: Lesson = {
   successMessage:
     'The Job completed all 3 tasks successfully despite a pod failure. The Job controller automatically retried the failed pod — ' +
     'this is how Jobs handle transient failures with backoffLimit retries.',
+  yamlTemplate: `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-migration
+spec:
+  completions: ???
+  parallelism: 1
+  template:
+    spec:
+      containers:
+      - name: migrate
+        image: ???
+      restartPolicy: Never`,
   hints: [
-    { text: 'The syntax is: kubectl create job <name> --image=<image> --completions=<count>. Use "kubectl get jobs" to track progress.' },
-    { text: 'kubectl create job data-migration --image=migrate:1.0 --completions=3', exact: true },
+    { text: 'Switch to the YAML Editor tab — fill in completions as 3 and image as "migrate:1.0". Then click Apply.' },
+    { text: 'Or use the terminal: kubectl create job data-migration --image=migrate:1.0 --completions=3', exact: false },
     { text: 'One pod will fail around tick 2 — this is expected. The Job controller retries automatically.' },
     { text: 'Keep reconciling until kubectl get jobs shows 3/3 completions.' },
   ],

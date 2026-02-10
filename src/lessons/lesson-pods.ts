@@ -1,7 +1,7 @@
 import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 
-export const lesson2: Lesson = {
+export const lessonPods: Lesson = {
   id: 2,
   title: 'Pods',
   description:
@@ -21,7 +21,7 @@ export const lesson2: Lesson = {
   goals: [
     {
       description: 'Create a standalone pod named "standalone"',
-      check: (s: ClusterState) => s.pods.some(p => p.metadata.name === 'standalone') || s.tick > 0,
+      check: (s: ClusterState) => s.pods.some(p => p.metadata.name === 'standalone' && !p.metadata.deletionTimestamp) || s.events.some(e => e.objectKind === 'Pod' && e.objectName === 'standalone'),
     },
     {
       description: 'Create a Deployment named "my-app" with 2 replicas',

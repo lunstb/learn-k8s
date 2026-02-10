@@ -18,6 +18,9 @@ import type {
   CronJob,
   HorizontalPodAutoscaler,
   HelmRelease,
+  StorageClass,
+  PersistentVolume,
+  PersistentVolumeClaim,
 } from './types';
 import { reconcileReplicaSets } from './controllers/replicaset';
 import { reconcileDeployments } from './controllers/deployment';
@@ -29,6 +32,8 @@ import { reconcileDaemonSets } from './controllers/daemonset';
 import { reconcileJobs } from './controllers/job';
 import { reconcileCronJobs } from './controllers/cronjob';
 import { reconcileHPAs } from './controllers/hpa';
+import { reconcileStorage } from './controllers/storage';
+import { lessonDisplayNumber } from '../lessons/curriculum';
 import type { Lesson } from '../lessons/types';
 
 export type LessonPhase = 'lecture' | 'quiz' | 'practice';
@@ -59,6 +64,10 @@ export interface SimulatorStore {
   currentStep: number;
   predictionPending: boolean;
   predictionResult: 'correct' | 'incorrect' | null;
+
+  // YAML Editor state
+  yamlEditorContent: string;
+  activeBottomTab: 'terminal' | 'yaml';
 
   // UI state
   selectedResource: { kind: string; uid: string } | null;
@@ -107,6 +116,13 @@ export interface SimulatorStore {
   removeHPA: (uid: string) => void;
   addHelmRelease: (release: HelmRelease) => void;
   removeHelmRelease: (name: string) => void;
+  addStorageClass: (sc: StorageClass) => void;
+  removeStorageClass: (uid: string) => void;
+  addPV: (pv: PersistentVolume) => void;
+  removePV: (uid: string) => void;
+  addPVC: (pvc: PersistentVolumeClaim) => void;
+  removePVC: (uid: string) => void;
+  updatePVC: (uid: string, updates: Partial<PersistentVolumeClaim>) => void;
 
   // Simulation controls
   tick: (auto?: boolean) => void;
@@ -135,6 +151,10 @@ export interface SimulatorStore {
   // Predictions
   submitPrediction: (choiceIndex: number) => void;
   advanceStep: () => void;
+
+  // YAML Editor
+  setYamlEditorContent: (content: string) => void;
+  setActiveBottomTab: (tab: 'terminal' | 'yaml') => void;
 
   // UI
   setSelectedResource: (resource: { kind: string; uid: string } | null) => void;
@@ -177,6 +197,9 @@ const initialClusterState: ClusterState = {
   jobs: [],
   cronJobs: [],
   hpas: [],
+  storageClasses: [],
+  persistentVolumes: [],
+  persistentVolumeClaims: [],
   helmReleases: [],
   tick: 0,
 };
@@ -198,6 +221,8 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   currentStep: 0,
   predictionPending: false,
   predictionResult: null,
+  yamlEditorContent: '',
+  activeBottomTab: 'terminal',
   selectedResource: null,
   viewMode: 'infrastructure',
   showNetworkOverlay: false,
@@ -468,6 +493,49 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       cluster: { ...state.cluster, helmReleases: state.cluster.helmReleases.filter((r) => r.name !== name) },
     })),
 
+  addStorageClass: (sc) =>
+    set((state) => ({
+      cluster: { ...state.cluster, storageClasses: [...state.cluster.storageClasses, sc] },
+    })),
+
+  removeStorageClass: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, storageClasses: state.cluster.storageClasses.filter((s) => s.metadata.uid !== uid) },
+    })),
+
+  addPV: (pv) =>
+    set((state) => ({
+      cluster: { ...state.cluster, persistentVolumes: [...state.cluster.persistentVolumes, pv] },
+    })),
+
+  removePV: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, persistentVolumes: state.cluster.persistentVolumes.filter((p) => p.metadata.uid !== uid) },
+    })),
+
+  addPVC: (pvc) =>
+    set((state) => ({
+      cluster: { ...state.cluster, persistentVolumeClaims: [...state.cluster.persistentVolumeClaims, pvc] },
+    })),
+
+  removePVC: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, persistentVolumeClaims: state.cluster.persistentVolumeClaims.filter((p) => p.metadata.uid !== uid) },
+    })),
+
+  updatePVC: (uid, updates) =>
+    set((state) => ({
+      cluster: {
+        ...state.cluster,
+        persistentVolumeClaims: state.cluster.persistentVolumeClaims.map((p) =>
+          p.metadata.uid === uid ? { ...p, ...updates } : p
+        ),
+      },
+    })),
+
+  setYamlEditorContent: (content) => set({ yamlEditorContent: content }),
+  setActiveBottomTab: (tab) => set({ activeBottomTab: tab }),
+
   setSelectedResource: (resource) => set({ selectedResource: resource }),
   setViewMode: (mode) => set({ viewMode: mode }),
   toggleNetworkOverlay: () => set((s) => ({ showNetworkOverlay: !s.showNetworkOverlay })),
@@ -504,6 +572,9 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       jobs: state.cluster.jobs.map((j) => ({ ...j })),
       cronJobs: state.cluster.cronJobs.map((c) => ({ ...c })),
       hpas: state.cluster.hpas.map((h) => ({ ...h })),
+      storageClasses: [...state.cluster.storageClasses],
+      persistentVolumes: state.cluster.persistentVolumes.map((pv) => ({ ...pv })),
+      persistentVolumeClaims: state.cluster.persistentVolumeClaims.map((pvc) => ({ ...pvc })),
       helmReleases: [...state.cluster.helmReleases],
     };
     const allActions: ControllerAction[] = [];
@@ -580,6 +651,13 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     cluster.hpas = hpaResult.hpas;
     allActions.push(...hpaResult.actions);
     allEvents.push(...hpaResult.events);
+
+    // Storage controller (bind PVCs before scheduler)
+    const storageResult = reconcileStorage(cluster);
+    cluster.persistentVolumes = storageResult.persistentVolumes;
+    cluster.persistentVolumeClaims = storageResult.persistentVolumeClaims;
+    allActions.push(...storageResult.actions);
+    allEvents.push(...storageResult.events);
 
     // Scheduler (assigns pods to nodes)
     const schedulerResult = runScheduler(cluster);
@@ -725,6 +803,8 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       currentStep: 0,
       predictionPending: false,
       predictionResult: null,
+      yamlEditorContent: '',
+      activeBottomTab: 'terminal',
     });
   },
 
@@ -838,12 +918,15 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       jobs: state.jobs || [],
       cronJobs: state.cronJobs || [],
       hpas: state.hpas || [],
+      storageClasses: state.storageClasses || [],
+      persistentVolumes: state.persistentVolumes || [],
+      persistentVolumeClaims: state.persistentVolumeClaims || [],
       helmReleases: state.helmReleases || [],
       tick: 0,
     };
 
     const terminalOutput = [
-      `--- Lesson ${currentLesson.id}: ${currentLesson.title} (Practice) ---`,
+      `--- Lesson ${lessonDisplayNumber[currentLesson.id] ?? currentLesson.id}: ${currentLesson.title} (Practice) ---`,
       '',
       `Goal: ${currentLesson.goalDescription}`,
       '',
@@ -876,6 +959,8 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       hintIndex: 0,
       predictionPending,
       predictionResult: null,
+      yamlEditorContent: currentLesson.yamlTemplate || '',
+      activeBottomTab: currentLesson.yamlTemplate ? 'yaml' : 'terminal',
     });
   },
 
@@ -1024,6 +1109,38 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
       }
     }
 
+    // Check PVC dependencies for Pending pods
+    if (pod.status.phase === 'Pending' && pod.spec.volumes && !pod.spec.failureMode) {
+      let unboundPVC: string | null = null;
+      for (const vol of pod.spec.volumes) {
+        if (vol.persistentVolumeClaim) {
+          const pvc = cluster.persistentVolumeClaims.find(
+            (p) => p.metadata.name === vol.persistentVolumeClaim!.claimName
+          );
+          if (!pvc || pvc.status.phase !== 'Bound') {
+            unboundPVC = vol.persistentVolumeClaim.claimName;
+            break;
+          }
+        }
+      }
+      if (unboundPVC) {
+        if (pod.status.reason !== 'Pending') {
+          pod.status.reason = 'Pending';
+          pod.status.message = `persistentvolumeclaim "${unboundPVC}" not bound`;
+          events.push({
+            timestamp: Date.now(), tick: currentTick, type: 'Warning', reason: 'FailedScheduling',
+            objectKind: 'Pod', objectName: pod.metadata.name,
+            message: `persistentvolumeclaim "${unboundPVC}" not bound`,
+          });
+        }
+        continue;
+      } else if (pod.status.reason === 'Pending' && pod.status.message?.includes('persistentvolumeclaim')) {
+        // PVC is now bound, clear the error
+        pod.status.reason = undefined;
+        pod.status.message = undefined;
+      }
+    }
+
     // Handle failure modes
     if (pod.spec.failureMode === 'ImagePullError') {
       if (pod.status.phase === 'Pending') {
@@ -1057,6 +1174,7 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
         pod.status.reason = 'CrashLoopBackOff';
         pod.status.message = 'Back-off restarting failed container';
         pod.status.restartCount = (pod.status.restartCount || 0) + 1;
+        (pod.status as any)._crashTick = currentTick;
         pod.spec.logs.push(`[fatal] Process exited with code 1`);
         pod.spec.logs.push(`[error] Back-off restarting failed container`);
         events.push({
@@ -1067,8 +1185,14 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
         continue;
       }
       if (pod.status.phase === 'CrashLoopBackOff') {
-        pod.status.phase = 'Running';
-        pod.status.reason = undefined;
+        // Exponential backoff: wait longer between restarts (simulates real K8s 10s, 20s, 40s... up to 5min)
+        const restarts = pod.status.restartCount || 1;
+        const backoffTicks = Math.min(restarts, 4); // 1, 2, 3, 4 ticks backoff
+        const crashTick = (pod.status as any)._crashTick ?? currentTick;
+        if (currentTick - crashTick >= backoffTicks) {
+          pod.status.phase = 'Running';
+          pod.status.reason = undefined;
+        }
         continue;
       }
     }

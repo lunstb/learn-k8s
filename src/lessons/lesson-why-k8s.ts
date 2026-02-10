@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, templateHash } from '../simulation/utils';
 
-export const lesson1: Lesson = {
+export const lessonWhyK8s: Lesson = {
   id: 1,
   title: 'Why Kubernetes?',
   description:

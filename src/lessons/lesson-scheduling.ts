@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson6: Lesson = {
+export const lessonScheduling: Lesson = {
   id: 6,
   title: 'Nodes and Scheduling',
   description:

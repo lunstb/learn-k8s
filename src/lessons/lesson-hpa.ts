@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson20: Lesson = {
+export const lessonHPA: Lesson = {
   id: 20,
   title: 'Horizontal Pod Autoscaler',
   description:
@@ -13,9 +13,20 @@ export const lesson20: Lesson = {
   successMessage:
     'You created the HPA and it detected high CPU utilization, scaling the deployment up automatically. ' +
     'HPA is the key to matching capacity to demand — no manual intervention needed after setup.',
+  yamlTemplate: `apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: ???
+  minReplicas: ???
+  maxReplicas: ???
+  targetCPUUtilizationPercentage: ???`,
   hints: [
-    { text: 'Use "kubectl top pods" to see current CPU usage. The syntax for autoscaling is: kubectl autoscale deployment <name> --min=<n> --max=<n> --cpu-percent=<target>' },
-    { text: 'kubectl autoscale deployment web --min=2 --max=8 --cpu-percent=50', exact: true },
+    { text: 'Switch to the YAML Editor tab — fill in scaleTargetRef name as "web", minReplicas as 2, maxReplicas as 8, and targetCPUUtilizationPercentage as 50.' },
+    { text: 'Or use the terminal: kubectl autoscale deployment web --min=2 --max=8 --cpu-percent=50', exact: false },
     { text: 'Reconcile to trigger the HPA evaluation loop and see new pods created.' },
   ],
   goals: [

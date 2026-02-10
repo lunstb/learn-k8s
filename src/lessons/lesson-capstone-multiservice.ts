@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson23: Lesson = {
+export const lessonCapstoneMultiservice: Lesson = {
   id: 23,
   title: 'Capstone: Multi-Service Architecture',
   description:
@@ -27,7 +27,7 @@ export const lesson23: Lesson = {
       description: 'Fix the backend image typo ("backnd:1.0" \u2192 "backend:1.0")',
       check: (s: ClusterState) => {
         const backend = s.deployments.find(d => d.metadata.name === 'backend');
-        return !!backend && backend.spec.template.spec.image !== 'backnd:1.0';
+        return !!backend && backend.spec.template.spec.image === 'backend:1.0';
       },
     },
     {

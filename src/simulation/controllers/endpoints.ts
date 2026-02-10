@@ -20,7 +20,14 @@ export function reconcileEndpoints(cluster: ClusterState): EndpointsResult {
         labelsMatch(svc.spec.selector, p.metadata.labels)
     );
 
-    const newEndpoints = matchingPods.map((p) => p.metadata.name).sort();
+    // Use simulated pod IPs (like real K8s endpoints) instead of pod names
+    const newEndpoints = matchingPods.map((p) => {
+      // Generate a deterministic IP from the pod UID
+      const hash = p.metadata.uid.replace(/[^0-9]/g, '').slice(0, 6);
+      const octet3 = parseInt(hash.slice(0, 3), 10) % 256;
+      const octet4 = parseInt(hash.slice(3, 6), 10) % 256 || 1;
+      return `10.244.${octet3}.${octet4}`;
+    }).sort();
     const oldEndpoints = [...svc.status.endpoints].sort();
 
     // Check if endpoints changed

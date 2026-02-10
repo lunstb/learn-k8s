@@ -45,6 +45,7 @@ export interface Lesson {
   mode: 'full' | 'lecture-quiz';
   goalDescription: string;
   successMessage: string;
+  yamlTemplate?: string;
   hints?: LessonHint[];
   goals?: LessonGoal[];
   initialState?: () => Partial<Omit<ClusterState, 'tick'>> & Pick<ClusterState, 'pods' | 'replicaSets' | 'deployments' | 'nodes' | 'services' | 'events'>;

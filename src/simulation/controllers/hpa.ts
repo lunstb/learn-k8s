@@ -82,8 +82,12 @@ export function reconcileHPAs(state: ClusterState): ReconcileResult {
       currentCPUUtilizationPercentage: averageCPU,
     };
 
-    // Scale the deployment if needed
-    if (desiredReplicas !== currentReplicas) {
+    // HPA cooldown: don't scale again within 3 ticks of last scale action (simulates real K8s stabilization window)
+    const lastScaleTick = (hpa as any)._lastScaleTick ?? -Infinity;
+    const cooldownTicks = 3;
+
+    // Scale the deployment if needed (and cooldown has passed)
+    if (desiredReplicas !== currentReplicas && (currentTick - lastScaleTick) >= cooldownTicks) {
       targetDeployment.spec = {
         ...targetDeployment.spec,
         replicas: desiredReplicas,
@@ -104,6 +108,9 @@ export function reconcileHPAs(state: ClusterState): ReconcileResult {
         objectName: hpa.metadata.name,
         message: `New size: ${desiredReplicas}; reason: CPU utilization ${averageCPU?.toFixed(0) ?? 'unknown'}% > target ${targetCPUUtilizationPercentage}%`,
       });
+
+      // Track last scale tick for cooldown
+      (hpa as any)._lastScaleTick = currentTick;
     }
   }
 

@@ -1,6 +1,78 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { useSimulatorStore } from '../simulation/store';
+import { glossary } from '../glossary';
+import { GlossaryTooltip } from './GlossaryTooltip';
 import './LessonContent.css';
+
+// Build glossary regex once — sorted longest-first to avoid partial matches
+const glossaryTerms = Object.keys(glossary).sort((a, b) => b.length - a.length);
+const glossaryPattern = glossaryTerms.length > 0
+  ? new RegExp(`\\b(${glossaryTerms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`, 'g')
+  : null;
+
+function parseInlineFormatting(text: string): ReactNode[] {
+  // Phase 1: split on **bold** and `code` spans
+  const tokenPattern = /(\*\*(.+?)\*\*|`([^`]+)`)/g;
+  const segments: { type: 'plain' | 'strong' | 'code'; text: string }[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenPattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ type: 'plain', text: text.slice(lastIndex, match.index) });
+    }
+    if (match[2] != null) {
+      segments.push({ type: 'strong', text: match[2] });
+    } else if (match[3] != null) {
+      segments.push({ type: 'code', text: match[3] });
+    }
+    lastIndex = tokenPattern.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ type: 'plain', text: text.slice(lastIndex) });
+  }
+
+  // Phase 2: annotate glossary terms in plain-text segments (first occurrence only)
+  const seen = new Set<string>();
+  let key = 0;
+  const result: ReactNode[] = [];
+
+  for (const seg of segments) {
+    if (seg.type === 'strong') {
+      result.push(<strong key={key++}>{seg.text}</strong>);
+    } else if (seg.type === 'code') {
+      result.push(<code key={key++} className="inline-code">{seg.text}</code>);
+    } else {
+      // plain text — scan for glossary terms
+      if (!glossaryPattern) {
+        result.push(seg.text);
+        continue;
+      }
+      glossaryPattern.lastIndex = 0;
+      let plainLast = 0;
+      let gmatch: RegExpExecArray | null;
+      while ((gmatch = glossaryPattern.exec(seg.text)) !== null) {
+        const term = gmatch[1];
+        if (seen.has(term)) continue;
+        seen.add(term);
+        if (gmatch.index > plainLast) {
+          result.push(seg.text.slice(plainLast, gmatch.index));
+        }
+        result.push(
+          <GlossaryTooltip key={key++} term={term} definition={glossary[term]}>
+            {term}
+          </GlossaryTooltip>
+        );
+        plainLast = glossaryPattern.lastIndex;
+      }
+      if (plainLast < seg.text.length) {
+        result.push(seg.text.slice(plainLast));
+      }
+    }
+  }
+
+  return result;
+}
 
 function renderLectureContent(content: string): ReactNode[] {
   const lines = content.split('\n');
@@ -35,7 +107,7 @@ function renderLectureContent(content: string): ReactNode[] {
     if (block.type === 'code') {
       return <pre key={i} className="lecture-code">{block.text}</pre>;
     }
-    return <p key={i} className="lecture-prose">{block.text}</p>;
+    return <p key={i} className="lecture-prose">{parseInlineFormatting(block.text)}</p>;
   });
 }
 
@@ -67,7 +139,7 @@ function LectureView() {
       <div className="lesson-content-scroll">
         <div className="lecture-header">
           <h2>Lesson {currentLesson.id}: {currentLesson.title}</h2>
-          <p className="lecture-subtitle">{currentLesson.description}</p>
+          <p className="lecture-subtitle">{parseInlineFormatting(currentLesson.description)}</p>
         </div>
 
         {currentLesson.lecture.sections.map((section, i) => (
@@ -78,7 +150,7 @@ function LectureView() {
               <pre className="lecture-diagram">{section.diagram}</pre>
             )}
             {section.keyTakeaway && (
-              <div className="lecture-takeaway">{section.keyTakeaway}</div>
+              <div className="lecture-takeaway">{parseInlineFormatting(section.keyTakeaway)}</div>
             )}
           </div>
         ))}
@@ -241,17 +313,16 @@ function QuizView() {
             }
 
             return (
-              <label key={i} className={cls}>
-                <input
-                  type="radio"
-                  name="quiz-choice"
-                  checked={selectedChoice === i}
-                  onChange={() => !quizRevealed && setSelectedChoice(i)}
-                  disabled={quizRevealed}
-                />
+              <div
+                key={i}
+                className={cls}
+                onClick={() => !quizRevealed && setSelectedChoice(i)}
+                role="button"
+                tabIndex={quizRevealed ? -1 : 0}
+              >
                 <span className="quiz-choice-key">{i + 1}</span>
                 {choice}
-              </label>
+              </div>
             );
           })}
         </div>

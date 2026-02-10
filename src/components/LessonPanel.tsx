@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useSimulatorStore } from '../simulation/store';
 import type { LessonPhase } from '../simulation/store';
-import { curriculum } from '../lessons';
+import { curriculum, lessonDisplayNumber } from '../lessons';
 import type { CurriculumSection } from '../lessons';
 import type { LessonGoal } from '../lessons/types';
 
@@ -29,7 +29,7 @@ export function LessonPanel() {
 
   // Track which sections are expanded
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
-    return new Set(curriculum.map((s) => s.id));
+    return new Set(['fundamentals']);
   });
 
   // Auto-expand section containing current lesson
@@ -244,7 +244,7 @@ function SectionGroup({
                 } ${isCompleted ? 'completed' : ''}`}
                 onClick={() => onSelectLesson(lesson)}
               >
-                <span className="lesson-number">{lesson.id}</span>
+                <span className="lesson-number">{lessonDisplayNumber[lesson.id] ?? lesson.id}</span>
                 <span className="lesson-title">{lesson.title}</span>
                 {isCompleted && (
                   <span className="lesson-check">&#10003;</span>

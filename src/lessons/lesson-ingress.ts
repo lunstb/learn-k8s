@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson14: Lesson = {
+export const lessonIngress: Lesson = {
   id: 14,
   title: 'Ingress',
   description:
@@ -13,9 +13,24 @@ export const lesson14: Lesson = {
   successMessage:
     'You created an Ingress. External traffic to your specified host/path will now be routed through the Ingress controller ' +
     'to the "web-svc" Service and its pods. This is how you expose HTTP applications to the outside world.',
+  yamlTemplate: `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-ing
+spec:
+  rules:
+  - host: ???
+    http:
+      paths:
+      - path: /
+        backend:
+          service:
+            name: ???
+            port:
+              number: ???`,
   hints: [
-    { text: 'The syntax is: kubectl create ingress <name> --rule=<host>/<path>=<service>:<port>' },
-    { text: 'kubectl create ingress web-ing --rule=myapp.example.com/=web-svc:80', exact: true },
+    { text: 'Switch to the YAML Editor tab — fill in host as "myapp.example.com", service name as "web-svc", and port as 80.' },
+    { text: 'Or use the terminal: kubectl create ingress web-ing --rule=myapp.example.com/=web-svc:80', exact: false },
   ],
   goals: [
     {

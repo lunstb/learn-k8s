@@ -1,6 +1,6 @@
 import type { Lesson } from './types';
 
-export const lesson15: Lesson = {
+export const lessonNetworkPolicies: Lesson = {
   id: 15,
   title: 'Network Policies',
   description:

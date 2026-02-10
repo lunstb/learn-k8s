@@ -1,4 +1,85 @@
 /**
+ * YAML serializer for --dry-run -o yaml.
+ * Converts objects to clean YAML, omitting internal simulator fields.
+ */
+
+const INTERNAL_FIELDS = new Set([
+  'uid', 'creationTimestamp', 'deletionTimestamp', 'ownerReference',
+  'tickCreated', 'failureMode', 'logs', 'ready', 'cpuUsage',
+  'restartCount', 'reason', 'message', '_crashTick',
+]);
+
+export function toYaml(obj: unknown, indent = 0): string {
+  if (obj === null || obj === undefined) return 'null';
+  if (typeof obj === 'string') {
+    // Quote strings that could be ambiguous
+    if (obj === '' || obj === 'true' || obj === 'false' || obj === 'null' ||
+        /^\d+$/.test(obj) || /^\d+\.\d+$/.test(obj) || obj.includes(': ') || obj.includes('#')) {
+      return `"${obj}"`;
+    }
+    return obj;
+  }
+  if (typeof obj === 'number' || typeof obj === 'boolean') return String(obj);
+
+  const prefix = '  '.repeat(indent);
+
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return '[]';
+    const lines: string[] = [];
+    for (const item of obj) {
+      if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+        const entries = Object.entries(item).filter(([k]) => !INTERNAL_FIELDS.has(k));
+        if (entries.length === 0) {
+          lines.push(`${prefix}- {}`);
+        } else {
+          const [firstKey, firstVal] = entries[0];
+          lines.push(`${prefix}- ${firstKey}: ${toYaml(firstVal, indent + 2)}`);
+          for (let i = 1; i < entries.length; i++) {
+            const [k, v] = entries[i];
+            const valStr = toYaml(v, indent + 2);
+            if (typeof v === 'object' && v !== null) {
+              lines.push(`${prefix}  ${k}:`);
+              lines.push(valStr);
+            } else {
+              lines.push(`${prefix}  ${k}: ${valStr}`);
+            }
+          }
+        }
+      } else {
+        lines.push(`${prefix}- ${toYaml(item, indent + 1)}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  if (typeof obj === 'object') {
+    const entries = Object.entries(obj as Record<string, unknown>).filter(
+      ([k, v]) => !INTERNAL_FIELDS.has(k) && v !== undefined
+    );
+    if (entries.length === 0) return '{}';
+    const lines: string[] = [];
+    for (const [key, value] of entries) {
+      if (typeof value === 'object' && value !== null) {
+        const valStr = toYaml(value, indent + 1);
+        if (Array.isArray(value) && value.length === 0) {
+          lines.push(`${prefix}${key}: []`);
+        } else if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
+          lines.push(`${prefix}${key}: {}`);
+        } else {
+          lines.push(`${prefix}${key}:`);
+          lines.push(valStr);
+        }
+      } else {
+        lines.push(`${prefix}${key}: ${toYaml(value, indent)}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  return String(obj);
+}
+
+/**
  * Minimal YAML parser for kubectl apply.
  * Supports: key: value pairs, nested indentation (2-space), lists (- item),
  * nested maps in lists, quoted strings, numbers, booleans.

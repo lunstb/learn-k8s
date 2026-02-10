@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
-export const lesson16: Lesson = {
+export const lessonStatefulSets: Lesson = {
   id: 16,
   title: 'StatefulSets',
   description:
@@ -13,9 +13,27 @@ export const lesson16: Lesson = {
   successMessage:
     'All 3 StatefulSet pods are running with stable ordinal names. Unlike Deployments, StatefulSets give each pod ' +
     'a predictable identity that survives restarts — essential for databases and clustered applications.',
+  yamlTemplate: `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  serviceName: mysql
+  replicas: ???
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: ???`,
   hints: [
-    { text: 'The syntax is: kubectl create statefulset <name> --image=<image> --replicas=<count>. Pods are created one at a time, so reconcile multiple times.' },
-    { text: 'kubectl create statefulset mysql --image=mysql:8.0 --replicas=3', exact: true },
+    { text: 'Switch to the YAML Editor tab — fill in replicas as 3 and image as "mysql:8.0". Then click Apply.' },
+    { text: 'Or use the terminal: kubectl create statefulset mysql --image=mysql:8.0 --replicas=3', exact: false },
     { text: 'Reconcile multiple times — StatefulSet creates pods sequentially, not all at once.' },
   ],
   goals: [

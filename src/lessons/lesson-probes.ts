@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson13: Lesson = {
+export const lessonProbes: Lesson = {
   id: 13,
   title: 'Liveness & Readiness Probes',
   description:
@@ -13,11 +13,34 @@ export const lesson13: Lesson = {
   successMessage:
     'All pods passed their readiness probes and the service is routing traffic to all healthy endpoints. ' +
     'Without readiness probes, Running pods may be added to Service endpoints before they are truly ready to serve.',
+  yamlTemplate: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.21
+        readinessProbe:
+          httpGet:
+            path: ???
+            port: ???
+          initialDelaySeconds: ???
+          periodSeconds: ???`,
   hints: [
-    { text: 'Check kubectl get endpoints — the service has 0 endpoints despite pods Running.' },
-    { text: 'Pods need a readinessProbe to be considered "ready" by the service.' },
-    { text: 'Delete the deployment first: kubectl delete deployment web', exact: true },
-    { text: 'Then apply a YAML manifest with readinessProbe configured in spec.template.spec.containers[0].' },
+    { text: 'First delete the existing deployment: kubectl delete deployment web. Then switch to the YAML Editor tab.' },
+    { text: 'In the YAML Editor, fill in the readinessProbe: path should be "/", port 80, initialDelaySeconds 1, periodSeconds 5.' },
+    { text: 'kubectl delete deployment web', exact: true },
+    { text: 'Click Apply in the YAML Editor (or Ctrl+Enter) to create the new deployment with probes.' },
   ],
   goals: [
     {

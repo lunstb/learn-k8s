@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson12: Lesson = {
+export const lessonResourceLimits: Lesson = {
   id: 12,
   title: 'Resource Requests & Limits',
   description:

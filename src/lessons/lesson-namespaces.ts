@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
-export const lesson9: Lesson = {
+export const lessonNamespaces: Lesson = {
   id: 9,
   title: 'Namespaces',
   description:

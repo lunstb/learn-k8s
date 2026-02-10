@@ -1,9 +1,9 @@
 import { useSimulatorStore } from '../simulation/store';
 import { parseCommand } from './parser';
 import type { ParsedCommand } from './parser';
-import type { Deployment, Pod, Service, Namespace, ConfigMap, Secret, Ingress, StatefulSet, DaemonSet, Job, CronJob, HorizontalPodAutoscaler } from '../simulation/types';
+import type { Deployment, Pod, Service, Namespace, ConfigMap, Secret, Ingress, StatefulSet, DaemonSet, Job, CronJob, HorizontalPodAutoscaler, StorageClass, PersistentVolume, PersistentVolumeClaim } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
-import { parseYaml } from './yaml-parser';
+import { parseYaml, toYaml } from './yaml-parser';
 
 export function executeCommand(input: string): string[] {
   const store = useSimulatorStore.getState();
@@ -87,14 +87,36 @@ export function executeCommand(input: string): string[] {
   }
 }
 
+function isDryRun(cmd: ParsedCommand): boolean {
+  return cmd.flags['dry-run'] === 'client' || cmd.flags['dry-run'] === 'true';
+}
+
+function getOutputFormat(cmd: ParsedCommand): string | undefined {
+  return cmd.flags['o'] || cmd.flags['output'];
+}
+
+function dryRunYamlOutput(obj: Record<string, unknown>, cmd: ParsedCommand): string[] | null {
+  if (!isDryRun(cmd)) return null;
+  const outputFmt = getOutputFormat(cmd);
+  if (outputFmt === 'yaml') {
+    const yamlStr = toYaml(obj);
+    const store = useSimulatorStore.getState();
+    store.setYamlEditorContent(yamlStr);
+    return [...yamlStr.split('\n'), '', '# Tip: YAML loaded into YAML Editor tab — edit and apply from there'];
+  }
+  // dry-run without -o yaml: just print the "created (dry run)" message
+  return null;
+}
+
 function handleCreate(cmd: ParsedCommand): string[] {
   const store = useSimulatorStore.getState();
+  const dryRun = isDryRun(cmd);
 
   if (cmd.resourceType === 'deployment') {
     if (!cmd.resourceName) {
       return ['Error: Missing deployment name. Usage: kubectl create deployment <name> --image=<image> [--replicas=N]'];
     }
-    if (store.cluster.deployments.find((d) => d.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.deployments.find((d) => d.metadata.name === cmd.resourceName)) {
       return [`Error: deployment "${cmd.resourceName}" already exists`];
     }
     const image = cmd.flags.image || 'nginx';
@@ -131,6 +153,9 @@ function handleCreate(cmd: ParsedCommand): string[] {
         conditions: [],
       },
     };
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name: cmd.resourceName, labels: { app: cmd.resourceName } }, spec: { replicas, selector: { matchLabels: { app: cmd.resourceName } }, template: { metadata: { labels: { app: cmd.resourceName } }, spec: { containers: [{ name: cmd.resourceName, image }] } } } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`deployment.apps/${cmd.resourceName} created (dry run)`];
     store.addDeployment(dep);
     store.addEvent({
       timestamp: Date.now(),
@@ -148,10 +173,13 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing pod name. Usage: kubectl create pod <name> --image=<image>'];
     }
-    if (store.cluster.pods.find((p) => p.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.pods.find((p) => p.metadata.name === cmd.resourceName)) {
       return [`Error: pod "${cmd.resourceName}" already exists`];
     }
     const image = cmd.flags.image || 'nginx';
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'v1', kind: 'Pod', metadata: { name: cmd.resourceName }, spec: { containers: [{ name: cmd.resourceName, image }] } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`pod/${cmd.resourceName} created (dry run)`];
     const pod: Pod = {
       kind: 'Pod',
       metadata: {
@@ -180,7 +208,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing service name. Usage: kubectl create service <name> --selector=app=myapp --port=80'];
     }
-    if (store.cluster.services.find((s) => s.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.services.find((s) => s.metadata.name === cmd.resourceName)) {
       return [`Error: service "${cmd.resourceName}" already exists`];
     }
     const selectorStr = cmd.flags.selector || '';
@@ -197,6 +225,9 @@ function handleCreate(cmd: ParsedCommand): string[] {
       return ['Error: --selector is required. Usage: kubectl create service <name> --selector=app=myapp --port=80'];
     }
     const port = parseInt(cmd.flags.port || '80', 10);
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'v1', kind: 'Service', metadata: { name: cmd.resourceName }, spec: { selector, ports: [{ port, protocol: 'TCP' }] } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`service/${cmd.resourceName} created (dry run)`];
     const svc: Service = {
       kind: 'Service',
       metadata: {
@@ -225,9 +256,12 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing namespace name. Usage: kubectl create namespace <name>'];
     }
-    if (store.cluster.namespaces.find((n) => n.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.namespaces.find((n) => n.metadata.name === cmd.resourceName)) {
       return [`Error: namespace "${cmd.resourceName}" already exists`];
     }
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'v1', kind: 'Namespace', metadata: { name: cmd.resourceName } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`namespace/${cmd.resourceName} created (dry run)`];
     const ns: Namespace = {
       kind: 'Namespace',
       metadata: {
@@ -255,7 +289,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing configmap name. Usage: kubectl create configmap <name> --from-literal=key=val'];
     }
-    if (store.cluster.configMaps.find((c) => c.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.configMaps.find((c) => c.metadata.name === cmd.resourceName)) {
       return [`Error: configmap "${cmd.resourceName}" already exists`];
     }
     const data: Record<string, string> = {};
@@ -266,6 +300,9 @@ function handleCreate(cmd: ParsedCommand): string[] {
         data[fromLiteral.substring(0, eqIdx)] = fromLiteral.substring(eqIdx + 1);
       }
     }
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'v1', kind: 'ConfigMap', metadata: { name: cmd.resourceName }, data }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`configmap/${cmd.resourceName} created (dry run)`];
     const cm: ConfigMap = {
       kind: 'ConfigMap',
       metadata: {
@@ -293,7 +330,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing secret name. Usage: kubectl create secret generic <name> --from-literal=key=val'];
     }
-    if (store.cluster.secrets.find((s) => s.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.secrets.find((s) => s.metadata.name === cmd.resourceName)) {
       return [`Error: secret "${cmd.resourceName}" already exists`];
     }
     const data: Record<string, string> = {};
@@ -304,6 +341,9 @@ function handleCreate(cmd: ParsedCommand): string[] {
         data[fromLiteral.substring(0, eqIdx)] = btoa(fromLiteral.substring(eqIdx + 1));
       }
     }
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'v1', kind: 'Secret', metadata: { name: cmd.resourceName }, type: 'Opaque', data }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`secret/${cmd.resourceName} created (dry run)`];
     const secret: Secret = {
       kind: 'Secret',
       metadata: {
@@ -332,7 +372,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing ingress name. Usage: kubectl create ingress <name> --rule=host/path=svc:port'];
     }
-    if (store.cluster.ingresses.find((i) => i.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.ingresses.find((i) => i.metadata.name === cmd.resourceName)) {
       return [`Error: ingress "${cmd.resourceName}" already exists`];
     }
     const ruleStr = cmd.flags.rule || '';
@@ -352,6 +392,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
         rules.push({ host, path, serviceName, servicePort });
       }
     }
+    if (dryRun) return [`ingress.networking.k8s.io/${cmd.resourceName} created (dry run)`];
     const ing: Ingress = {
       kind: 'Ingress',
       metadata: {
@@ -380,7 +421,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing statefulset name. Usage: kubectl create statefulset <name> --image=<image> [--replicas=N]'];
     }
-    if (store.cluster.statefulSets.find((s) => s.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.statefulSets.find((s) => s.metadata.name === cmd.resourceName)) {
       return [`Error: statefulset "${cmd.resourceName}" already exists`];
     }
     const image = cmd.flags.image || 'nginx';
@@ -404,6 +445,9 @@ function handleCreate(cmd: ParsedCommand): string[] {
       },
       status: { replicas: 0, readyReplicas: 0, currentReplicas: 0 },
     };
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'apps/v1', kind: 'StatefulSet', metadata: { name: cmd.resourceName, labels: { app: cmd.resourceName } }, spec: { replicas, serviceName: cmd.resourceName, selector: { matchLabels: { app: cmd.resourceName } }, template: { metadata: { labels: { app: cmd.resourceName } }, spec: { containers: [{ name: cmd.resourceName, image }] } } } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`statefulset.apps/${cmd.resourceName} created (dry run)`];
     store.addStatefulSet(sts);
     store.addEvent({
       timestamp: Date.now(),
@@ -421,7 +465,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing daemonset name. Usage: kubectl create daemonset <name> --image=<image>'];
     }
-    if (store.cluster.daemonSets.find((d) => d.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.daemonSets.find((d) => d.metadata.name === cmd.resourceName)) {
       return [`Error: daemonset "${cmd.resourceName}" already exists`];
     }
     const image = cmd.flags.image || 'nginx';
@@ -442,6 +486,9 @@ function handleCreate(cmd: ParsedCommand): string[] {
       },
       status: { desiredNumberScheduled: 0, currentNumberScheduled: 0, numberReady: 0 },
     };
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'apps/v1', kind: 'DaemonSet', metadata: { name: cmd.resourceName, labels: { app: cmd.resourceName } }, spec: { selector: { matchLabels: { app: cmd.resourceName } }, template: { metadata: { labels: { app: cmd.resourceName } }, spec: { containers: [{ name: cmd.resourceName, image }] } } } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`daemonset.apps/${cmd.resourceName} created (dry run)`];
     store.addDaemonSet(ds);
     store.addEvent({
       timestamp: Date.now(),
@@ -459,7 +506,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing job name. Usage: kubectl create job <name> --image=<image> [--completions=N]'];
     }
-    if (store.cluster.jobs.find((j) => j.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.jobs.find((j) => j.metadata.name === cmd.resourceName)) {
       return [`Error: job "${cmd.resourceName}" already exists`];
     }
     const image = cmd.flags.image || 'busybox';
@@ -484,6 +531,9 @@ function handleCreate(cmd: ParsedCommand): string[] {
       },
       status: { succeeded: 0, failed: 0, active: 0, startTime: store.cluster.tick },
     };
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'batch/v1', kind: 'Job', metadata: { name: cmd.resourceName }, spec: { completions, parallelism, template: { spec: { containers: [{ name: cmd.resourceName, image }], restartPolicy: 'Never' } } } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`job.batch/${cmd.resourceName} created (dry run)`];
     store.addJob(job);
     store.addEvent({
       timestamp: Date.now(),
@@ -501,11 +551,14 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!cmd.resourceName) {
       return ['Error: Missing cronjob name. Usage: kubectl create cronjob <name> --image=<image> --schedule="*/5 * * * *"'];
     }
-    if (store.cluster.cronJobs.find((c) => c.metadata.name === cmd.resourceName)) {
+    if (!dryRun && store.cluster.cronJobs.find((c) => c.metadata.name === cmd.resourceName)) {
       return [`Error: cronjob "${cmd.resourceName}" already exists`];
     }
     const image = cmd.flags.image || 'busybox';
     const schedule = cmd.flags.schedule || '*/5 * * * *';
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'batch/v1', kind: 'CronJob', metadata: { name: cmd.resourceName }, spec: { schedule, jobTemplate: { spec: { template: { spec: { containers: [{ name: cmd.resourceName, image }], restartPolicy: 'Never' } } } } } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`cronjob.batch/${cmd.resourceName} created (dry run)`];
     const store2 = useSimulatorStore.getState();
     store2.addCronJob({
       kind: 'CronJob',
@@ -534,7 +587,33 @@ function handleCreate(cmd: ParsedCommand): string[] {
     return [`cronjob.batch/${cmd.resourceName} created`];
   }
 
-  return [`Error: Cannot create resource type "${cmd.resourceType}". Supported: deployment, pod, service, namespace, configmap, secret, ingress, statefulset, daemonset, job, cronjob`];
+  if (cmd.resourceType === 'pvc') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing PVC name. Usage: kubectl create pvc <name> --storage=1Gi [--storageclass=standard]'];
+    }
+    if (!dryRun && store.cluster.persistentVolumeClaims.find((p) => p.metadata.name === cmd.resourceName)) {
+      return [`Error: persistentvolumeclaim "${cmd.resourceName}" already exists`];
+    }
+    const storage = cmd.flags.storage || '1Gi';
+    const storageClassName = cmd.flags.storageclass || cmd.flags['storage-class'] || undefined;
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: cmd.resourceName }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage } }, storageClassName } }, cmd);
+    if (yamlOut) return yamlOut;
+    if (dryRun) return [`persistentvolumeclaim/${cmd.resourceName} created (dry run)`];
+    const pvc: PersistentVolumeClaim = {
+      kind: 'PersistentVolumeClaim',
+      metadata: { name: cmd.resourceName, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+      spec: {
+        accessModes: ['ReadWriteOnce'],
+        resources: { requests: { storage } },
+        storageClassName,
+      },
+      status: { phase: 'Pending' },
+    };
+    store.addPVC(pvc);
+    return [`persistentvolumeclaim/${cmd.resourceName} created`];
+  }
+
+  return [`Error: Cannot create resource type "${cmd.resourceType}". Supported: deployment, pod, service, namespace, configmap, secret, ingress, statefulset, daemonset, job, cronjob, pvc`];
 }
 
 function handleGet(cmd: ParsedCommand): string[] {
@@ -854,6 +933,73 @@ function handleGet(cmd: ParsedCommand): string[] {
     return [header, ...rows];
   }
 
+  if (cmd.resourceType === 'pv') {
+    const pvList = cmd.resourceName
+      ? store.cluster.persistentVolumes.filter((p) => p.metadata.name === cmd.resourceName)
+      : store.cluster.persistentVolumes;
+    if (cmd.resourceName && pvList.length === 0) {
+      return [`Error: persistentvolume "${cmd.resourceName}" not found`];
+    }
+    if (pvList.length === 0) {
+      return ['No persistent volumes found.'];
+    }
+    const header = padRow(['NAME', 'CAPACITY', 'ACCESS MODES', 'STATUS', 'STORAGECLASS']);
+    const rows = pvList.map((p) =>
+      padRow([
+        p.metadata.name,
+        p.spec.capacity.storage,
+        p.spec.accessModes.join(','),
+        p.status.phase,
+        p.spec.storageClassName,
+      ])
+    );
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'pvc') {
+    const pvcList = cmd.resourceName
+      ? store.cluster.persistentVolumeClaims.filter((p) => p.metadata.name === cmd.resourceName)
+      : store.cluster.persistentVolumeClaims;
+    if (cmd.resourceName && pvcList.length === 0) {
+      return [`Error: persistentvolumeclaim "${cmd.resourceName}" not found`];
+    }
+    if (pvcList.length === 0) {
+      return ['No persistent volume claims found.'];
+    }
+    const header = padRow(['NAME', 'STATUS', 'VOLUME', 'CAPACITY', 'STORAGECLASS']);
+    const rows = pvcList.map((p) => {
+      const vol = p.status.volumeName || '<none>';
+      const cap = p.status.phase === 'Bound' && p.status.volumeName
+        ? store.cluster.persistentVolumes.find((pv) => pv.metadata.name === p.status.volumeName)?.spec.capacity.storage || p.spec.resources.requests.storage
+        : '';
+      return padRow([
+        p.metadata.name,
+        p.status.phase,
+        vol,
+        cap,
+        p.spec.storageClassName || '',
+      ]);
+    });
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'storageclass') {
+    const scList = cmd.resourceName
+      ? store.cluster.storageClasses.filter((s) => s.metadata.name === cmd.resourceName)
+      : store.cluster.storageClasses;
+    if (cmd.resourceName && scList.length === 0) {
+      return [`Error: storageclass "${cmd.resourceName}" not found`];
+    }
+    if (scList.length === 0) {
+      return ['No storage classes found.'];
+    }
+    const header = padRow(['NAME', 'PROVISIONER', 'RECLAIMPOLICY']);
+    const rows = scList.map((s) =>
+      padRow([s.metadata.name, s.provisioner, s.reclaimPolicy])
+    );
+    return [header, ...rows];
+  }
+
   return [`Error: Unknown resource type "${cmd.resourceType}"`];
 }
 
@@ -1025,6 +1171,36 @@ function handleDelete(cmd: ParsedCommand): string[] {
     if (!hpa) return [`Error: hpa "${cmd.resourceName}" not found`];
     store.removeHPA(hpa.metadata.uid);
     return [`horizontalpodautoscaler.autoscaling "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'pv') {
+    const pv = store.cluster.persistentVolumes.find((p) => p.metadata.name === cmd.resourceName);
+    if (!pv) return [`Error: persistentvolume "${cmd.resourceName}" not found`];
+    store.removePV(pv.metadata.uid);
+    return [`persistentvolume "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'pvc') {
+    const pvc = store.cluster.persistentVolumeClaims.find((p) => p.metadata.name === cmd.resourceName);
+    if (!pvc) return [`Error: persistentvolumeclaim "${cmd.resourceName}" not found`];
+    // Release the bound PV
+    if (pvc.status.volumeName) {
+      const pv = store.cluster.persistentVolumes.find((p) => p.metadata.name === pvc.status.volumeName);
+      if (pv) {
+        store.removePV(pv.metadata.uid);
+        const releasedPV = { ...pv, spec: { ...pv.spec, claimRef: undefined }, status: { phase: 'Released' as const } };
+        store.addPV(releasedPV);
+      }
+    }
+    store.removePVC(pvc.metadata.uid);
+    return [`persistentvolumeclaim "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'storageclass') {
+    const sc = store.cluster.storageClasses.find((s) => s.metadata.name === cmd.resourceName);
+    if (!sc) return [`Error: storageclass "${cmd.resourceName}" not found`];
+    store.removeStorageClass(sc.metadata.uid);
+    return [`storageclass.storage.k8s.io "${cmd.resourceName}" deleted`];
   }
 
   return [`Error: Cannot delete resource type "${cmd.resourceType}"`];
@@ -1550,6 +1726,11 @@ function handleApplyYaml(yamlContent: string): string[] {
       case 'cronjob': return applyCronJob(doc, name);
       case 'ingress': return applyIngress(doc, name);
       case 'statefulset': return applyStatefulSet(doc, name);
+      case 'daemonset': return applyDaemonSet(doc, name);
+      case 'horizontalpodautoscaler': return applyHPA(doc, name);
+      case 'storageclass': return applyStorageClass(doc, name);
+      case 'persistentvolume': return applyPV(doc, name);
+      case 'persistentvolumeclaim': return applyPVC(doc, name);
       default: return [`Error: Unsupported kind "${doc.kind}" for apply.`];
     }
   } catch (e) {
@@ -1567,7 +1748,7 @@ function extractLabels(metadata: Record<string, unknown>): Record<string, string
   return result;
 }
 
-function extractPodSpec(specObj: Record<string, unknown>): { image: string; readinessProbe?: import('../simulation/types').Probe; livenessProbe?: import('../simulation/types').Probe; envFrom?: { configMapRef?: string; secretRef?: string }[]; resources?: import('../simulation/types').ResourceRequirements } {
+function extractPodSpec(specObj: Record<string, unknown>): { image: string; readinessProbe?: import('../simulation/types').Probe; livenessProbe?: import('../simulation/types').Probe; envFrom?: { configMapRef?: string; secretRef?: string }[]; resources?: import('../simulation/types').ResourceRequirements; volumes?: Array<{ name: string; persistentVolumeClaim?: { claimName: string } }> } {
   const containers = specObj.containers as Array<Record<string, unknown>> | undefined;
   const container = containers?.[0] || specObj;
   const image = String(container.image || 'nginx');
@@ -1609,6 +1790,18 @@ function extractPodSpec(specObj: Record<string, unknown>): { image: string; read
 
   if (container.resources) {
     result.resources = container.resources as import('../simulation/types').ResourceRequirements;
+  }
+
+  if (specObj.volumes) {
+    const volArr = specObj.volumes as Array<Record<string, unknown>>;
+    result.volumes = volArr.map((v) => {
+      const vol: { name: string; persistentVolumeClaim?: { claimName: string } } = { name: String(v.name || '') };
+      if (v.persistentVolumeClaim) {
+        const pvcRef = v.persistentVolumeClaim as Record<string, unknown>;
+        vol.persistentVolumeClaim = { claimName: String(pvcRef.claimName || '') };
+      }
+      return vol;
+    });
   }
 
   return result;
@@ -1868,6 +2061,119 @@ function applyStatefulSet(doc: Record<string, unknown>, name: string): string[] 
   return [`statefulset.apps/${name} created`];
 }
 
+function applyDaemonSet(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.daemonSets.find((d) => d.metadata.name === name);
+  if (existing) return [`daemonset.apps/${name} configured (unchanged)`];
+  const spec = doc.spec as Record<string, unknown> || {};
+  const template = spec.template as Record<string, unknown> || {};
+  const templateSpec = template.spec as Record<string, unknown> || {};
+  const podSpec = extractPodSpec(templateSpec);
+  const ds: DaemonSet = {
+    kind: 'DaemonSet',
+    metadata: { name, uid: generateUID(), labels: { app: name }, creationTimestamp: Date.now() },
+    spec: {
+      selector: { app: name },
+      template: { labels: { app: name }, spec: podSpec },
+    },
+    status: { desiredNumberScheduled: 0, currentNumberScheduled: 0, numberReady: 0 },
+  };
+  store.addDaemonSet(ds);
+  return [`daemonset.apps/${name} created`];
+}
+
+function applyHPA(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.hpas.find((h) => h.metadata.name === name);
+  if (existing) return [`horizontalpodautoscaler.autoscaling/${name} configured (unchanged)`];
+  const spec = doc.spec as Record<string, unknown> || {};
+  const scaleTargetRef = spec.scaleTargetRef as Record<string, unknown> || {};
+  const targetName = String(scaleTargetRef.name || name);
+  const dep = store.cluster.deployments.find((d) => d.metadata.name === targetName);
+  const hpa: HorizontalPodAutoscaler = {
+    kind: 'HorizontalPodAutoscaler',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    spec: {
+      scaleTargetRef: { kind: String(scaleTargetRef.kind || 'Deployment'), name: targetName },
+      minReplicas: spec.minReplicas ? Number(spec.minReplicas) : 1,
+      maxReplicas: spec.maxReplicas ? Number(spec.maxReplicas) : 10,
+      targetCPUUtilizationPercentage: spec.targetCPUUtilizationPercentage ? Number(spec.targetCPUUtilizationPercentage) : 80,
+    },
+    status: {
+      currentReplicas: dep?.spec.replicas || 1,
+      desiredReplicas: dep?.spec.replicas || 1,
+    },
+  };
+  store.addHPA(hpa);
+  return [`horizontalpodautoscaler.autoscaling/${name} autoscaled`];
+}
+
+function applyStorageClass(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.storageClasses.find((s) => s.metadata.name === name);
+  if (existing) return [`storageclass.storage.k8s.io/${name} configured (unchanged)`];
+  const provisioner = String(doc.provisioner || 'kubernetes.io/no-provisioner');
+  const reclaimPolicy = String(doc.reclaimPolicy || 'Delete') as 'Delete' | 'Retain';
+  const sc: StorageClass = {
+    kind: 'StorageClass',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    provisioner,
+    reclaimPolicy,
+  };
+  store.addStorageClass(sc);
+  store.addEvent({
+    timestamp: Date.now(), tick: store.cluster.tick,
+    type: 'Normal', reason: 'Created', objectKind: 'StorageClass', objectName: name,
+    message: `Created StorageClass "${name}" with provisioner ${provisioner}`,
+  });
+  return [`storageclass.storage.k8s.io/${name} created`];
+}
+
+function applyPV(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.persistentVolumes.find((p) => p.metadata.name === name);
+  if (existing) return [`persistentvolume/${name} configured (unchanged)`];
+  const spec = doc.spec as Record<string, unknown> || {};
+  const capacity = spec.capacity as Record<string, unknown> || {};
+  const accessModes = (spec.accessModes || []) as string[];
+  const storageClassName = String(spec.storageClassName || '');
+  const pv: PersistentVolume = {
+    kind: 'PersistentVolume',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    spec: {
+      capacity: { storage: String(capacity.storage || '1Gi') },
+      accessModes: accessModes.length > 0 ? accessModes : ['ReadWriteOnce'],
+      storageClassName,
+    },
+    status: { phase: 'Available' },
+  };
+  store.addPV(pv);
+  return [`persistentvolume/${name} created`];
+}
+
+function applyPVC(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.persistentVolumeClaims.find((p) => p.metadata.name === name);
+  if (existing) return [`persistentvolumeclaim/${name} configured (unchanged)`];
+  const spec = doc.spec as Record<string, unknown> || {};
+  const accessModes = (spec.accessModes || []) as string[];
+  const resources = spec.resources as Record<string, unknown> || {};
+  const requests = resources.requests as Record<string, unknown> || {};
+  const storageClassName = spec.storageClassName ? String(spec.storageClassName) : undefined;
+  const pvc: PersistentVolumeClaim = {
+    kind: 'PersistentVolumeClaim',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    spec: {
+      accessModes: accessModes.length > 0 ? accessModes : ['ReadWriteOnce'],
+      resources: { requests: { storage: String(requests.storage || '1Gi') } },
+      storageClassName,
+    },
+    status: { phase: 'Pending' },
+  };
+  store.addPVC(pvc);
+  return [`persistentvolumeclaim/${name} created`];
+}
+
 function handleLabel(cmd: ParsedCommand): string[] {
   const store = useSimulatorStore.getState();
   if (!cmd.resourceName) {
@@ -2100,8 +2406,10 @@ function getHelpText(): string[] {
     '  kubectl create job <name> --image=<image> [--completions=N]',
     '  kubectl create cronjob <name> --image=<image> --schedule="*/5 * * * *"',
     '',
+    '  kubectl create pvc <name> --storage=1Gi [--storageclass=standard]',
+    '',
     '  kubectl get deployments|pods|services|nodes|events|namespaces|...',
-    '  kubectl get configmaps|secrets|ingresses|statefulsets|daemonsets|jobs|cronjobs|hpa',
+    '  kubectl get configmaps|secrets|ingresses|statefulsets|daemonsets|jobs|cronjobs|hpa|pv|pvc|sc',
     '  kubectl describe <resource-type> <name>',
     '  kubectl logs <pod-name> [--tail=N]',
     '  kubectl scale deployment|replicaset|statefulset <name> --replicas=N',
@@ -2114,13 +2422,14 @@ function getHelpText(): string[] {
     '  kubectl drain <node-name>',
     '  kubectl taint node <name> key=value:Effect [key:Effect-]',
     '  kubectl autoscale deployment <name> --min=N --max=N --cpu-percent=N',
+    '  kubectl create ... --dry-run=client -o yaml   (generate YAML without creating)',
     '  kubectl apply -f - (then paste YAML, or paste YAML directly)',
     '',
     '  helm install <release-name> <chart>',
     '  helm list',
     '  helm uninstall <release-name>',
     '',
-    'Shortcuts: deploy, rs, po, no, svc, ev, ns, cm, ing, sts, ds, cj, hpa',
+    'Shortcuts: deploy, rs, po, no, svc, ev, ns, cm, ing, sts, ds, cj, hpa, pv, pvc, sc',
     'The "kubectl" prefix is optional.',
     '',
     'Controls:',

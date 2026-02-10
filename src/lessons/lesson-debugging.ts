@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson7: Lesson = {
+export const lessonDebugging: Lesson = {
   id: 7,
   title: 'Debugging Failures',
   description:
@@ -28,7 +28,7 @@ export const lesson7: Lesson = {
       description: 'Fix the ImagePullError and get pods Running',
       check: (s: ClusterState) => {
         const dep = s.deployments.find(d => d.metadata.name === 'web-app');
-        return !!dep && dep.spec.template.spec.image !== 'nignx:2.0' && !s.pods.some(p => p.status.reason === 'ImagePullError' && !p.metadata.deletionTimestamp);
+        return !!dep && dep.spec.template.spec.image === 'nginx:2.0' && !s.pods.some(p => p.status.reason === 'ImagePullError' && !p.metadata.deletionTimestamp);
       },
     },
     {

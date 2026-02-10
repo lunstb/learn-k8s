@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson21: Lesson = {
+export const lessonClusterAutoscaling: Lesson = {
   id: 21,
   title: 'Karpenter / Cluster Autoscaling',
   description:

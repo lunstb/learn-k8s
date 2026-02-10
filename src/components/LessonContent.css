@@ -63,6 +63,21 @@
   margin-bottom: 0;
 }
 
+.lecture-prose strong,
+.lecture-takeaway strong {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+code.inline-code {
+  background: #1e293b;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.82em;
+  color: #93c5fd;
+}
+
 .lecture-code {
   background: #1e293b;
   border: 1px solid #334155;
@@ -246,9 +261,9 @@
   opacity: 1;
 }
 
-.quiz-choice input[type="radio"] {
-  accent-color: #3b82f6;
-  flex-shrink: 0;
+.quiz-choice:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
 }
 
 .quiz-choice-key {

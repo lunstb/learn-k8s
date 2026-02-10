@@ -42,6 +42,7 @@ export interface PodSpec {
   restartPolicy?: 'Always' | 'OnFailure' | 'Never';
   logs?: string[];
   tolerations?: { key: string; operator?: 'Equal' | 'Exists'; value?: string; effect?: string }[];
+  volumes?: Array<{ name: string; persistentVolumeClaim?: { claimName: string } }>;
 }
 
 export type PodPhase = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Terminating' | 'CrashLoopBackOff';
@@ -281,6 +282,38 @@ export interface HorizontalPodAutoscaler {
   status: { currentReplicas: number; desiredReplicas: number; currentCPUUtilizationPercentage?: number };
 }
 
+// --- Storage ---
+
+export interface StorageClass {
+  kind: 'StorageClass';
+  metadata: ObjectMeta;
+  provisioner: string;
+  reclaimPolicy: 'Delete' | 'Retain';
+}
+
+export interface PersistentVolume {
+  kind: 'PersistentVolume';
+  metadata: ObjectMeta;
+  spec: {
+    capacity: { storage: string };
+    accessModes: string[];
+    storageClassName: string;
+    claimRef?: { name: string; uid: string };
+  };
+  status: { phase: 'Available' | 'Bound' | 'Released' };
+}
+
+export interface PersistentVolumeClaim {
+  kind: 'PersistentVolumeClaim';
+  metadata: ObjectMeta;
+  spec: {
+    accessModes: string[];
+    resources: { requests: { storage: string } };
+    storageClassName?: string;
+  };
+  status: { phase: 'Pending' | 'Bound'; volumeName?: string };
+}
+
 // --- Helm ---
 
 export interface HelmRelease {
@@ -290,7 +323,7 @@ export interface HelmRelease {
   deploymentName: string;
 }
 
-export type KubeObject = Pod | ReplicaSet | Deployment | SimNode | Service | Namespace | ConfigMap | Secret | Ingress | StatefulSet | DaemonSet | Job | CronJob | HorizontalPodAutoscaler;
+export type KubeObject = Pod | ReplicaSet | Deployment | SimNode | Service | Namespace | ConfigMap | Secret | Ingress | StatefulSet | DaemonSet | Job | CronJob | HorizontalPodAutoscaler | StorageClass | PersistentVolume | PersistentVolumeClaim;
 
 export interface ClusterState {
   pods: Pod[];
@@ -308,6 +341,9 @@ export interface ClusterState {
   jobs: Job[];
   cronJobs: CronJob[];
   hpas: HorizontalPodAutoscaler[];
+  storageClasses: StorageClass[];
+  persistentVolumes: PersistentVolume[];
+  persistentVolumeClaims: PersistentVolumeClaim[];
   helmReleases: HelmRelease[];
   tick: number;
 }

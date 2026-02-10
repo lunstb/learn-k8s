@@ -1,65 +1,72 @@
 import type { CurriculumSection, Lesson } from './types';
-import { lesson1 } from './lesson1';
-import { lesson2 } from './lesson2';
-import { lesson3 } from './lesson3';
-import { lesson4 } from './lesson4';
-import { lesson5 } from './lesson5';
-import { lesson6 } from './lesson6';
-import { lesson7 } from './lesson7';
-import { lesson8 } from './lesson8';
-import { lesson9 } from './lesson9';
-import { lesson10 } from './lesson10';
-import { lesson11 } from './lesson11';
-import { lesson12 } from './lesson12';
-import { lesson13 } from './lesson13';
-import { lesson14 } from './lesson14';
-import { lesson15 } from './lesson15';
-import { lesson16 } from './lesson16';
-import { lesson17 } from './lesson17';
-import { lesson18 } from './lesson18';
-import { lesson19 } from './lesson19';
-import { lesson20 } from './lesson20';
-import { lesson21 } from './lesson21';
-import { lesson22 } from './lesson22';
-import { lesson23 } from './lesson23';
+import { lessonWhyK8s } from './lesson-why-k8s';
+import { lessonPods } from './lesson-pods';
+import { lessonReplicaSets } from './lesson-replicasets';
+import { lessonDeployments } from './lesson-deployments';
+import { lessonServices } from './lesson-services';
+import { lessonScheduling } from './lesson-scheduling';
+import { lessonDebugging } from './lesson-debugging';
+import { lessonCapstoneTroubleshooting } from './lesson-capstone-troubleshooting';
+import { lessonNamespaces } from './lesson-namespaces';
+import { lessonConfigMaps } from './lesson-configmaps';
+import { lessonSecrets } from './lesson-secrets';
+import { lessonResourceLimits } from './lesson-resource-limits';
+import { lessonProbes } from './lesson-probes';
+import { lessonIngress } from './lesson-ingress';
+import { lessonNetworkPolicies } from './lesson-network-policies';
+import { lessonStatefulSets } from './lesson-statefulsets';
+import { lessonDaemonSets } from './lesson-daemonsets';
+import { lessonJobs } from './lesson-jobs';
+import { lessonStorage } from './lesson-storage';
+import { lessonHelm } from './lesson-helm';
+import { lessonHPA } from './lesson-hpa';
+import { lessonClusterAutoscaling } from './lesson-cluster-autoscaling';
+import { lessonRBAC } from './lesson-rbac';
+import { lessonCapstoneMultiservice } from './lesson-capstone-multiservice';
 
 export const curriculum: CurriculumSection[] = [
   {
     id: 'fundamentals',
     title: 'Fundamentals',
     description: 'Core Kubernetes concepts: pods, deployments, services, and the control loop.',
-    lessons: [lesson1, lesson2, lesson3, lesson4, lesson5, lesson6, lesson7, lesson8],
+    lessons: [lessonWhyK8s, lessonPods, lessonReplicaSets, lessonDeployments, lessonServices, lessonScheduling, lessonDebugging, lessonCapstoneTroubleshooting],
   },
   {
     id: 'workload-config',
     title: 'Workload Configuration',
     description: 'Namespaces, configuration, secrets, and resource management.',
-    lessons: [lesson9, lesson10, lesson11, lesson12, lesson13],
+    lessons: [lessonNamespaces, lessonConfigMaps, lessonSecrets, lessonResourceLimits, lessonProbes],
   },
   {
     id: 'networking',
     title: 'Networking & Routing',
     description: 'Ingress routing and network policies.',
-    lessons: [lesson14, lesson15],
+    lessons: [lessonIngress, lessonNetworkPolicies],
   },
   {
     id: 'workload-types',
     title: 'Workload Types',
-    description: 'StatefulSets, DaemonSets, Jobs, and CronJobs.',
-    lessons: [lesson16, lesson17, lesson18],
+    description: 'StatefulSets, DaemonSets, Jobs, CronJobs, and persistent storage.',
+    lessons: [lessonStatefulSets, lessonDaemonSets, lessonJobs, lessonStorage],
   },
   {
     id: 'operations',
     title: 'Operations & Scaling',
     description: 'Helm, autoscaling, and access control.',
-    lessons: [lesson19, lesson20, lesson21, lesson22],
+    lessons: [lessonHelm, lessonHPA, lessonClusterAutoscaling, lessonRBAC],
   },
   {
     id: 'advanced',
     title: 'Advanced Troubleshooting',
     description: 'Multi-service architecture and advanced debugging.',
-    lessons: [lesson23],
+    lessons: [lessonCapstoneMultiservice],
   },
 ];
 
 export const allLessons: Lesson[] = curriculum.flatMap((s) => s.lessons);
+
+// Map from internal lesson.id → display number (1-indexed position in curriculum)
+export const lessonDisplayNumber: Record<number, number> = {};
+allLessons.forEach((lesson, i) => {
+  lessonDisplayNumber[lesson.id] = i + 1;
+});

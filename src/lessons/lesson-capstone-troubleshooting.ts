@@ -2,7 +2,7 @@ import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
-export const lesson8: Lesson = {
+export const lessonCapstoneTroubleshooting: Lesson = {
   id: 8,
   title: 'Capstone: Troubleshooting',
   description:
@@ -27,7 +27,7 @@ export const lesson8: Lesson = {
       description: 'Fix the backend image typo (currently "nignx:2.0")',
       check: (s: ClusterState) => {
         const backend = s.deployments.find(d => d.metadata.name === 'backend');
-        return !!backend && backend.spec.template.spec.image !== 'nignx:2.0';
+        return !!backend && backend.spec.template.spec.image === 'nginx:2.0';
       },
     },
     {
