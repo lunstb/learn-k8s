@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson8: Lesson = {
@@ -8,17 +9,46 @@ export const lesson8: Lesson = {
     'Put everything together by diagnosing and fixing a broken cluster with multiple simultaneous issues.',
   mode: 'full',
   goalDescription:
-    'Find and fix all issues: deployments healthy, services have endpoints, all nodes Ready.',
+    'Find and fix all issues: the frontend needs 3 Running pods, the backend has an image typo ("nignx:2.0"), the backend-svc has the wrong selector, and one node is cordoned. All deployments healthy, all services with endpoints, all nodes Ready.',
   successMessage:
     'Congratulations! You diagnosed and fixed: under-replicated frontend, image typo on backend, ' +
     'wrong selector on backend-svc, and cordoned node.',
   hints: [
-    'Start with: kubectl get pods -- look for non-Running pods.',
-    'Check events: kubectl get events',
-    'The frontend deployment is under-replicated (check replica count vs running pods).',
-    'The backend has an image typo -- check the image name.',
-    'The backend-svc has the wrong selector -- compare with pod labels.',
-    'One node is cordoned -- check: kubectl get nodes.',
+    { text: 'Start with kubectl get pods to identify which pods are not Running.' },
+    { text: 'Check events with kubectl get events for error details.' },
+    { text: 'The backend deployment has an image typo — look at the image name carefully.' },
+    { text: 'kubectl set image deployment/backend nginx:2.0', exact: true },
+    { text: 'The backend-svc selector doesn\'t match the backend pods. Compare labels.' },
+    { text: 'kubectl patch service backend-svc --selector=app=backend', exact: true },
+    { text: 'One node is cordoned. Use kubectl get nodes to find it, then uncordon it.' },
+  ],
+  goals: [
+    {
+      description: 'Fix the backend image typo (currently "nignx:2.0")',
+      check: (s: ClusterState) => {
+        const backend = s.deployments.find(d => d.metadata.name === 'backend');
+        return !!backend && backend.spec.template.spec.image !== 'nignx:2.0';
+      },
+    },
+    {
+      description: 'Fix the backend-svc selector to match backend pods (app=backend)',
+      check: (s: ClusterState) => {
+        const svc = s.services.find(svc => svc.spec.selector['app'] === 'backend');
+        return !!svc && svc.status.endpoints.length > 0;
+      },
+    },
+    {
+      description: 'Uncordon the NotReady node',
+      check: (s: ClusterState) => s.nodes.every(n => n.status.conditions[0].status === 'True'),
+    },
+    {
+      description: '3 Running frontend pods and 3 Running backend pods',
+      check: (s: ClusterState) => {
+        const frontendRunning = s.pods.filter(p => p.metadata.labels['app'] === 'frontend' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+        const backendRunning = s.pods.filter(p => p.metadata.labels['app'] === 'backend' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+        return frontendRunning.length >= 3 && backendRunning.length >= 3;
+      },
+    },
   ],
   lecture: {
     sections: [

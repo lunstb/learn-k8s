@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson14: Lesson = {
@@ -8,14 +9,21 @@ export const lesson14: Lesson = {
     'Ingress provides HTTP/HTTPS routing from outside the cluster to Services inside, with host-based and path-based rules.',
   mode: 'full',
   goalDescription:
-    'Create an Ingress resource that routes external traffic to the "web-svc" Service.',
+    'Create an Ingress named "web-ing" that routes traffic from myapp.example.com to the "web-svc" Service on port 80.',
   successMessage:
     'You created an Ingress. External traffic to your specified host/path will now be routed through the Ingress controller ' +
     'to the "web-svc" Service and its pods. This is how you expose HTTP applications to the outside world.',
   hints: [
-    'kubectl create ingress web-ing --rule=myapp.example.com/=web-svc:80',
-    'Use: kubectl get ingresses to verify it was created.',
-    'The Ingress controller reads your rules and configures routing automatically.',
+    { text: 'The syntax is: kubectl create ingress <name> --rule=<host>/<path>=<service>:<port>' },
+    { text: 'kubectl create ingress web-ing --rule=myapp.example.com/=web-svc:80', exact: true },
+  ],
+  goals: [
+    {
+      description: 'Create an Ingress with a rule routing to "web-svc"',
+      check: (s: ClusterState) => {
+        return s.ingresses.some(ing => ing.spec.rules.some(r => r.serviceName === 'web-svc'));
+      },
+    },
   ],
   lecture: {
     sections: [
@@ -334,7 +342,10 @@ export const lesson14: Lesson = {
     };
   },
   goalCheck: (state) => {
-    // Need at least 1 ingress
-    return state.ingresses.length >= 1;
+    // Need at least 1 ingress that routes to web-svc
+    const ingress = state.ingresses.find((ing) =>
+      ing.spec.rules.some((r) => r.serviceName === 'web-svc')
+    );
+    return !!ingress;
   },
 };

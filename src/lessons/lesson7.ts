@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson7: Lesson = {
@@ -8,17 +9,37 @@ export const lesson7: Lesson = {
     'Learn to diagnose and fix the two most common pod failures: ImagePullError and CrashLoopBackOff.',
   mode: 'full',
   goalDescription:
-    'Trigger an ImagePullError by deploying a typo image, diagnose and fix it, then trigger CrashLoopBackOff and fix that too.',
+    'Deploy a bad image to trigger an ImagePullError, diagnose and fix it. Then trigger a CrashLoopBackOff and fix that. Final state: all 3 pods Running nginx:2.0.',
   successMessage:
     'ImagePullError = bad image name. CrashLoopBackOff = app crashes on start. ' +
     'Events and describe are your debugging tools.',
   hints: [
-    'First: kubectl set image deployment/web-app nignx:2.0 (note the typo!)',
-    'Check events: kubectl get events',
-    'Fix: kubectl set image deployment/web-app nginx:2.0',
-    'Then try: kubectl set image deployment/web-app crash-app:1.0',
-    'Check events and restart counts.',
-    'Fix: kubectl set image deployment/web-app nginx:2.0',
+    { text: 'Try setting a deliberately bad image name to see what happens.' },
+    { text: 'kubectl set image deployment/web-app nignx:2.0', exact: true },
+    { text: 'Use kubectl get events to see the error. Fix the typo in the image name.' },
+    { text: 'kubectl set image deployment/web-app nginx:2.0', exact: true },
+  ],
+  goals: [
+    {
+      description: 'Trigger an ImagePullError (deploy image "nignx:2.0" — note the typo)',
+      check: (s: ClusterState) => s.pods.some(p => p.status.reason === 'ImagePullError') || s.events.some(e => e.reason === 'Failed' && e.message.includes('ImagePullError')),
+    },
+    {
+      description: 'Fix the ImagePullError and get pods Running',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+        return !!dep && dep.spec.template.spec.image !== 'nignx:2.0' && !s.pods.some(p => p.status.reason === 'ImagePullError' && !p.metadata.deletionTimestamp);
+      },
+    },
+    {
+      description: 'All 3 pods Running with image nginx:2.0',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+        if (!dep || dep.spec.template.spec.image !== 'nginx:2.0') return false;
+        const activePods = s.pods.filter(p => !p.metadata.deletionTimestamp && p.status.phase === 'Running' && p.spec.image === 'nginx:2.0' && s.replicaSets.some(rs => rs.metadata.ownerReference?.uid === dep.metadata.uid && rs.metadata.uid === p.metadata.ownerReference?.uid));
+        return activePods.length === 3;
+      },
+    },
   ],
   lecture: {
     sections: [

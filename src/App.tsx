@@ -1,3 +1,4 @@
+import { useState, useCallback, useRef } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { ClusterVisualization } from './components/ClusterVisualization';
 import { Terminal } from './components/Terminal';
@@ -13,8 +14,39 @@ import './App.css';
 function App() {
   const currentLesson = useSimulatorStore((s) => s.currentLesson);
   const lessonPhase = useSimulatorStore((s) => s.lessonPhase);
+  const [bottomHeight, setBottomHeight] = useState(350);
+  const dragging = useRef(false);
+  const startY = useRef(0);
+  const startHeight = useRef(0);
 
   const showLessonContent = currentLesson && lessonPhase !== 'practice';
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    startY.current = e.clientY;
+    startHeight.current = bottomHeight;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const delta = startY.current - ev.clientY;
+      const newHeight = Math.min(Math.max(startHeight.current + delta, 150), window.innerHeight - 200);
+      setBottomHeight(newHeight);
+    };
+
+    const onMouseUp = () => {
+      dragging.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [bottomHeight]);
 
   return (
     <ReactFlowProvider>
@@ -36,7 +68,8 @@ function App() {
                   <ClusterVisualization />
                   <ResourceDetailPanel />
                 </div>
-                <div className="bottom-panel">
+                <div className="resize-handle" onMouseDown={onMouseDown} />
+                <div className="bottom-panel" style={{ height: bottomHeight }}>
                   <Controls />
                   <div className="terminal-events-row">
                     <Terminal />

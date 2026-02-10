@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
 export const lesson19: Lesson = {
@@ -8,15 +9,29 @@ export const lesson19: Lesson = {
     'Helm is the package manager for Kubernetes. Learn how charts bundle multiple resources into installable, versioned releases.',
   mode: 'full',
   goalDescription:
-    'Install a Helm release "my-app" and verify the created deployment is running with healthy pods.',
+    'Install a Helm release named "my-app" using the "nginx-chart" chart. Verify the created deployment has healthy Running pods.',
   successMessage:
     'Helm release deployed successfully. Helm simplifies complex deployments by packaging multiple Kubernetes resources ' +
     'into a single chart that can be installed, upgraded, and rolled back as a unit.',
   hints: [
-    'Install a Helm chart: helm install my-app nginx-chart',
-    'Click "Reconcile" to let the deployment controller create and schedule pods.',
-    'Reconcile again until pods reach Running status.',
-    'Check the release: helm list',
+    { text: 'Helm installs pre-packaged applications (charts) into your cluster.' },
+    { text: 'helm install my-app nginx-chart', exact: true },
+    { text: 'Reconcile until the deployment\'s pods reach Running status. Check with helm list.' },
+  ],
+  goals: [
+    {
+      description: 'Install Helm release "my-app" from nginx-chart',
+      check: (s: ClusterState) => s.helmReleases.some(r => r.name === 'my-app' && r.status === 'deployed'),
+    },
+    {
+      description: 'Deployment created by the release has Running pods',
+      check: (s: ClusterState) => {
+        const release = s.helmReleases.find(r => r.name === 'my-app');
+        if (!release) return false;
+        const dep = s.deployments.find(d => d.metadata.name === release.deploymentName);
+        return !!dep && (dep.status.readyReplicas || 0) > 0;
+      },
+    },
   ],
   lecture: {
     sections: [

@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson4: Lesson = {
@@ -8,14 +9,32 @@ export const lesson4: Lesson = {
     'See how Deployments orchestrate rolling updates by creating new ReplicaSets and gradually replacing pods.',
   mode: 'full',
   goalDescription:
-    'Update the image to nginx:2.0 and Reconcile until all pods run the new version.',
+    'Update the "my-app" Deployment image from nginx:1.0 to nginx:2.0 and reconcile until all 3 pods run the new version.',
   successMessage:
     'Rolling update complete! Two ReplicaSets coexisted during transition. ' +
     'The old RS scaled down as the new one scaled up.',
   hints: [
-    'Use: kubectl set image deployment/my-app nginx:2.0',
-    'Click "Reconcile" multiple times to step through the rolling update.',
-    'Watch the old ReplicaSet shrink and the new one grow.',
+    { text: 'Use kubectl set image to update a deployment\'s container image.' },
+    { text: 'kubectl set image deployment/my-app nginx:2.0', exact: true },
+    { text: 'Reconcile multiple times to step through the rolling update — watch the old ReplicaSet shrink and new one grow.' },
+  ],
+  goals: [
+    {
+      description: 'Update the deployment image to nginx:2.0',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+        return !!dep && dep.spec.template.spec.image === 'nginx:2.0';
+      },
+    },
+    {
+      description: 'All 3 pods running nginx:2.0',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+        if (!dep) return false;
+        const activePods = s.pods.filter(p => !p.metadata.deletionTimestamp && p.status.phase === 'Running' && s.replicaSets.some(rs => rs.metadata.ownerReference?.uid === dep.metadata.uid && rs.metadata.uid === p.metadata.ownerReference?.uid));
+        return activePods.length === 3 && activePods.every(p => p.spec.image === 'nginx:2.0');
+      },
+    },
   ],
   lecture: {
     sections: [

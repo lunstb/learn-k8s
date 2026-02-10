@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson10: Lesson = {
@@ -8,14 +9,29 @@ export const lesson10: Lesson = {
     'ConfigMaps decouple configuration from container images, letting you change app behavior without rebuilding.',
   mode: 'full',
   goalDescription:
-    'Create a ConfigMap called "app-config" with at least one key-value pair.',
+    'The "web" Deployment pods are stuck in CreateContainerConfigError because they reference a missing ConfigMap. Create a ConfigMap named "app-config" with the key LOG_LEVEL=info to fix them.',
   successMessage:
-    'You created a ConfigMap. Applications can now consume this configuration as environment variables or mounted files — ' +
-    'without rebuilding the container image.',
+    'You created the ConfigMap and the pods recovered! Pods that reference missing ConfigMaps enter CreateContainerConfigError. ' +
+    'Always create ConfigMaps before deploying pods that depend on them.',
   hints: [
-    'kubectl create configmap app-config --from-literal=ENV=production',
-    'Use: kubectl get configmaps to verify it was created.',
-    'You can add multiple keys: --from-literal=ENV=production --from-literal=LOG_LEVEL=info',
+    { text: 'Run "kubectl get pods" to see the error status, then "kubectl describe pod <name>" to see exactly which ConfigMap is missing.' },
+    { text: 'The syntax is: kubectl create configmap <name> --from-literal=<key>=<value>' },
+    { text: 'kubectl create configmap app-config --from-literal=LOG_LEVEL=info', exact: true },
+  ],
+  goals: [
+    {
+      description: 'Create ConfigMap "app-config" with key LOG_LEVEL=info',
+      check: (s: ClusterState) => {
+        const cm = s.configMaps.find(c => c.metadata.name === 'app-config');
+        return !!cm && Object.keys(cm.data).length >= 1;
+      },
+    },
+    {
+      description: 'All "web" pods Running (no longer stuck)',
+      check: (s: ClusterState) => {
+        return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 2;
+      },
+    },
   ],
   lecture: {
     sections: [
@@ -185,8 +201,8 @@ export const lesson10: Lesson = {
         },
         creationTimestamp: Date.now() - 60000,
       },
-      spec: { image },
-      status: { phase: 'Running' as const },
+      spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
+      status: { phase: 'Pending' as const, reason: 'CreateContainerConfigError', message: 'configmap "app-config" not found' },
     }));
 
     return {
@@ -204,16 +220,16 @@ export const lesson10: Lesson = {
             selector: { app: 'web' },
             template: {
               labels: { app: 'web' },
-              spec: { image },
+              spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
             },
             strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
           },
           status: {
             replicas: 2,
-            updatedReplicas: 2,
-            readyReplicas: 2,
-            availableReplicas: 2,
-            conditions: [{ type: 'Available', status: 'True' }],
+            updatedReplicas: 0,
+            readyReplicas: 0,
+            availableReplicas: 0,
+            conditions: [],
           },
         },
       ],
@@ -236,10 +252,10 @@ export const lesson10: Lesson = {
             selector: { app: 'web', 'pod-template-hash': hash },
             template: {
               labels: { app: 'web', 'pod-template-hash': hash },
-              spec: { image },
+              spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
             },
           },
-          status: { replicas: 2, readyReplicas: 2 },
+          status: { replicas: 2, readyReplicas: 0 },
         },
       ],
       pods,
@@ -288,11 +304,15 @@ export const lesson10: Lesson = {
     };
   },
   goalCheck: (state) => {
-    // Need at least 1 configmap named "app-config"
+    // ConfigMap must exist with correct key
     const cm = state.configMaps.find((c) => c.metadata.name === 'app-config');
     if (!cm) return false;
+    if (Object.keys(cm.data).length < 1) return false;
 
-    // Must have at least one key
-    return Object.keys(cm.data).length >= 1;
+    // Web pods must be Running
+    const webPods = state.pods.filter(
+      (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+    );
+    return webPods.length >= 2;
   },
 };

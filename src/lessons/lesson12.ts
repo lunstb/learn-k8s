@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson12: Lesson = {
@@ -8,15 +9,37 @@ export const lesson12: Lesson = {
     'Resource requests and limits tell Kubernetes how much CPU and memory your containers need, affecting scheduling and stability.',
   mode: 'full',
   goalDescription:
-    'Create a deployment "hungry-app" with image hungry-app:1.0 (which will OOMKill), observe the failure, then fix it by setting the image to web-app:1.0. Verify all deployments are healthy.',
+    'Create a Deployment "hungry-app" with image hungry-app:1.0 (which will be OOMKilled), observe the failure, then fix it by changing the image to web-app:1.0. Both "web" and "hungry-app" deployments must be healthy.',
   successMessage:
     'You observed OOMKilled — the container exceeded its memory limit and was killed by the kernel. ' +
     'Setting proper resource limits prevents one container from starving others. In production, always set both requests and limits.',
   hints: [
-    'kubectl create deployment hungry-app --image=hungry-app:1.0',
-    'Reconcile and observe the OOMKilled status on the pods.',
-    'kubectl set image deployment/hungry-app hungry-app=web-app:1.0',
-    'Reconcile again to see pods reach Running state.',
+    { text: 'Start by creating the deployment. Use "kubectl describe pod <name>" after reconciling to see why pods are failing.' },
+    { text: 'kubectl create deployment hungry-app --image=hungry-app:1.0', exact: true },
+    { text: 'The pods get OOMKilled — you need to change to a working image.' },
+    { text: 'kubectl set image deployment/hungry-app hungry-app=web-app:1.0', exact: true },
+  ],
+  goals: [
+    {
+      description: 'Create the "hungry-app" Deployment',
+      check: (s: ClusterState) => !!s.deployments.find(d => d.metadata.name === 'hungry-app'),
+    },
+    {
+      description: 'Fix the OOMKill by changing the image to web-app:1.0',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'hungry-app');
+        return !!dep && dep.spec.template.spec.image !== 'hungry-app:1.0';
+      },
+    },
+    {
+      description: 'Both "web" and "hungry-app" deployments fully healthy',
+      check: (s: ClusterState) => {
+        const web = s.deployments.find(d => d.metadata.name === 'web');
+        const hungry = s.deployments.find(d => d.metadata.name === 'hungry-app');
+        if (!web || !hungry) return false;
+        return [web, hungry].every(dep => (dep.status.readyReplicas || 0) >= dep.spec.replicas);
+      },
+    },
   ],
   podFailureRules: {
     'hungry-app:1.0': 'OOMKilled',
@@ -302,10 +325,16 @@ export const lesson12: Lesson = {
     };
   },
   goalCheck: (state) => {
-    // All deployments must have readyReplicas >= spec.replicas
-    if (state.deployments.length === 0) return false;
+    // Must have "hungry-app" deployment with image changed from hungry-app:1.0
+    const hungryApp = state.deployments.find((d) => d.metadata.name === 'hungry-app');
+    if (!hungryApp) return false;
+    if (hungryApp.spec.template.spec.image === 'hungry-app:1.0') return false;
 
-    return state.deployments.every((dep) => {
+    // Both "web" and "hungry-app" must have readyReplicas >= spec.replicas
+    const web = state.deployments.find((d) => d.metadata.name === 'web');
+    if (!web) return false;
+
+    return [web, hungryApp].every((dep) => {
       const readyReplicas = dep.status.readyReplicas || 0;
       return readyReplicas >= dep.spec.replicas;
     });

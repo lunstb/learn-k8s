@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson13: Lesson = {
@@ -8,15 +9,34 @@ export const lesson13: Lesson = {
     'Probes let Kubernetes automatically detect unhealthy containers and control traffic routing to ensure only ready pods serve requests.',
   mode: 'full',
   goalDescription:
-    'Verify that all 3 pods are Ready and the service "web-svc" has at least 3 endpoints.',
+    'The "web" pods are Running but the "web-svc" Service has 0 endpoints because pods lack readiness probes. Delete the deployment, then recreate it with a readinessProbe using kubectl apply with a YAML manifest. The service needs at least 3 ready endpoints.',
   successMessage:
     'All pods passed their readiness probes and the service is routing traffic to all healthy endpoints. ' +
-    'Probes are the foundation of self-healing and safe traffic routing in Kubernetes.',
+    'Without readiness probes, Running pods may be added to Service endpoints before they are truly ready to serve.',
   hints: [
-    'kubectl get pods -- check the READY column to see which pods are ready.',
-    'kubectl describe service web-svc -- check the Endpoints list.',
-    'Click Reconcile to allow the readiness probes to complete and endpoints to update.',
-    'If pods are Running but not Ready, give them time — readiness probes may need a few ticks.',
+    { text: 'Check kubectl get endpoints — the service has 0 endpoints despite pods Running.' },
+    { text: 'Pods need a readinessProbe to be considered "ready" by the service.' },
+    { text: 'Delete the deployment first: kubectl delete deployment web', exact: true },
+    { text: 'Then apply a YAML manifest with readinessProbe configured in spec.template.spec.containers[0].' },
+  ],
+  goals: [
+    {
+      description: 'Deploy "web" pods with readiness probes configured',
+      check: (s: ClusterState) => s.pods.some(p => p.metadata.labels['app'] === 'web' && p.spec.readinessProbe && !p.metadata.deletionTimestamp),
+    },
+    {
+      description: 'At least 3 web pods Running and ready',
+      check: (s: ClusterState) => {
+        return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && p.status.ready === true && !p.metadata.deletionTimestamp).length >= 3;
+      },
+    },
+    {
+      description: 'Service "web-svc" has at least 3 endpoints',
+      check: (s: ClusterState) => {
+        const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
+        return !!svc && svc.status.endpoints.length >= 3;
+      },
+    },
   ],
   lecture: {
     sections: [
@@ -186,6 +206,7 @@ export const lesson13: Lesson = {
     const image = 'nginx:1.0';
     const hash = templateHash({ image });
 
+    // Pods are Running but NOT ready — no readiness probe configured
     const pods = Array.from({ length: 3 }, () => ({
       kind: 'Pod' as const,
       metadata: {
@@ -199,18 +220,8 @@ export const lesson13: Lesson = {
         },
         creationTimestamp: Date.now() - 60000,
       },
-      spec: {
-        image,
-        readinessProbe: {
-          type: 'httpGet' as const,
-          path: '/healthz',
-          port: 80,
-          initialDelaySeconds: 5,
-          periodSeconds: 10,
-          failureThreshold: 3,
-        },
-      },
-      status: { phase: 'Running' as const, ready: true },
+      spec: { image },
+      status: { phase: 'Running' as const, ready: false },
     }));
 
     return {
@@ -228,26 +239,16 @@ export const lesson13: Lesson = {
             selector: { app: 'web' },
             template: {
               labels: { app: 'web' },
-              spec: {
-                image,
-                readinessProbe: {
-                  type: 'httpGet' as const,
-                  path: '/healthz',
-                  port: 80,
-                  initialDelaySeconds: 5,
-                  periodSeconds: 10,
-                  failureThreshold: 3,
-                },
-              },
+              spec: { image },
             },
             strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
           },
           status: {
             replicas: 3,
             updatedReplicas: 3,
-            readyReplicas: 3,
-            availableReplicas: 3,
-            conditions: [{ type: 'Available', status: 'True' }],
+            readyReplicas: 0,
+            availableReplicas: 0,
+            conditions: [],
           },
         },
       ],
@@ -270,20 +271,10 @@ export const lesson13: Lesson = {
             selector: { app: 'web', 'pod-template-hash': hash },
             template: {
               labels: { app: 'web', 'pod-template-hash': hash },
-              spec: {
-                image,
-                readinessProbe: {
-                  type: 'httpGet' as const,
-                  path: '/healthz',
-                  port: 80,
-                  initialDelaySeconds: 5,
-                  periodSeconds: 10,
-                  failureThreshold: 3,
-                },
-              },
+              spec: { image },
             },
           },
-          status: { replicas: 3, readyReplicas: 3 },
+          status: { replicas: 3, readyReplicas: 0 },
         },
       ],
       pods,
@@ -327,7 +318,7 @@ export const lesson13: Lesson = {
             creationTimestamp: Date.now() - 120000,
           },
           spec: { selector: { app: 'web' }, port: 80 },
-          status: { endpoints: pods.map((p) => p.metadata.name) },
+          status: { endpoints: [] as string[] },
         },
       ],
       events: [],
@@ -343,12 +334,28 @@ export const lesson13: Lesson = {
       helmReleases: [],
     };
   },
-  goalCheck: (state) => {
-    // All pods must be Running and ready
+  afterTick: (_tick, state) => {
+    // If web pods have a readinessProbe configured and are Running, mark them ready
     const webPods = state.pods.filter(
       (p) =>
         p.metadata.labels['app'] === 'web' &&
         p.status.phase === 'Running' &&
+        !p.metadata.deletionTimestamp
+    );
+    for (const pod of webPods) {
+      if (pod.spec.readinessProbe && !pod.status.ready) {
+        pod.status.ready = true;
+      }
+    }
+    return state;
+  },
+  goalCheck: (state) => {
+    // All pods must be Running and ready with readiness probes
+    const webPods = state.pods.filter(
+      (p) =>
+        p.metadata.labels['app'] === 'web' &&
+        p.status.phase === 'Running' &&
+        p.status.ready === true &&
         !p.metadata.deletionTimestamp
     );
     if (webPods.length < 3) return false;

@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
 export const lesson18: Lesson = {
@@ -8,15 +9,28 @@ export const lesson18: Lesson = {
     'Jobs run tasks to completion rather than indefinitely. CronJobs schedule Jobs on a recurring basis.',
   mode: 'full',
   goalDescription:
-    'Create a Job "data-migration" with 3 completions and verify that all 3 completions succeed.',
+    'Create a Job named "data-migration" with image migrate:1.0 and 3 completions. One pod will fail during execution — the Job controller retries automatically. Verify all 3 completions succeed.',
   successMessage:
-    'The Job completed all 3 tasks successfully. Jobs are the right tool for batch work — they create pods, run them to ' +
-    'completion, and track success/failure rather than keeping pods running forever like Deployments.',
+    'The Job completed all 3 tasks successfully despite a pod failure. The Job controller automatically retried the failed pod — ' +
+    'this is how Jobs handle transient failures with backoffLimit retries.',
   hints: [
-    'Create a Job: kubectl create job data-migration --image=migrate:1.0 --completions=3',
-    'Click "Reconcile" to let the Job controller create pods and track progress.',
-    'Reconcile several times — each pod will run to completion (Succeeded) and the Job tracks the count.',
-    'Check status: kubectl get jobs — look for 3/3 completions.',
+    { text: 'The syntax is: kubectl create job <name> --image=<image> --completions=<count>. Use "kubectl get jobs" to track progress.' },
+    { text: 'kubectl create job data-migration --image=migrate:1.0 --completions=3', exact: true },
+    { text: 'One pod will fail around tick 2 — this is expected. The Job controller retries automatically.' },
+    { text: 'Keep reconciling until kubectl get jobs shows 3/3 completions.' },
+  ],
+  goals: [
+    {
+      description: 'Create a Job named "data-migration" with 3 completions',
+      check: (s: ClusterState) => !!s.jobs.find(j => j.metadata.name === 'data-migration'),
+    },
+    {
+      description: 'Job reaches 3/3 successful completions',
+      check: (s: ClusterState) => {
+        const job = s.jobs.find(j => j.metadata.name === 'data-migration');
+        return !!job && (job.status.succeeded || 0) >= 3;
+      },
+    },
   ],
   lecture: {
     sections: [
@@ -196,6 +210,25 @@ export const lesson18: Lesson = {
       hpas: [],
       helmReleases: [],
     };
+  },
+  afterTick: (tick, state) => {
+    // At tick 2, fail one running job pod to demonstrate failure handling
+    if (tick === 2) {
+      const jobPods = state.pods.filter(
+        (p) =>
+          p.metadata.labels['job-name'] === 'data-migration' &&
+          p.status.phase === 'Running' &&
+          !p.metadata.deletionTimestamp
+      );
+      if (jobPods.length > 0) {
+        const victim = jobPods[0];
+        victim.status.phase = 'Failed';
+        if (!victim.spec.logs) victim.spec.logs = [];
+        victim.spec.logs.push('[error] Connection reset by peer');
+        victim.spec.logs.push('[fatal] Process exited with code 1');
+      }
+    }
+    return state;
   },
   goalCheck: (state) => {
     if (state.jobs.length < 1) return false;

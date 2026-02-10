@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson20: Lesson = {
@@ -8,16 +9,33 @@ export const lesson20: Lesson = {
     'HPA automatically scales your application based on CPU utilization or custom metrics, matching capacity to demand.',
   mode: 'full',
   goalDescription:
-    'Observe the HPA scale up the "web" deployment due to high CPU usage, then verify the deployment has more than 2 replicas.',
+    'The "web" pods have high CPU usage (~85%) but no autoscaler. Create an HPA targeting the "web" Deployment with min=2, max=8, target CPU=50%. Reconcile until the HPA scales beyond 2 replicas.',
   successMessage:
-    'The HPA detected high CPU utilization and scaled the deployment up. Horizontal Pod Autoscaling is the key to ' +
-    'matching capacity to demand automatically — no manual intervention needed.',
+    'You created the HPA and it detected high CPU utilization, scaling the deployment up automatically. ' +
+    'HPA is the key to matching capacity to demand — no manual intervention needed after setup.',
   hints: [
-    'Check the HPA status: kubectl get hpa',
-    'Check current pod CPU: kubectl get pods — notice cpuUsage is above the target.',
-    'Click "Reconcile" to trigger the HPA evaluation loop.',
-    'The HPA will increase desired replicas. Reconcile again to see new pods created.',
-    'After tick 5, CPU drops and the HPA may scale back down.',
+    { text: 'Use "kubectl top pods" to see current CPU usage. The syntax for autoscaling is: kubectl autoscale deployment <name> --min=<n> --max=<n> --cpu-percent=<target>' },
+    { text: 'kubectl autoscale deployment web --min=2 --max=8 --cpu-percent=50', exact: true },
+    { text: 'Reconcile to trigger the HPA evaluation loop and see new pods created.' },
+  ],
+  goals: [
+    {
+      description: 'Create an HPA for the "web" Deployment (min=2, max=8, cpu=50%)',
+      check: (s: ClusterState) => s.hpas.some(h => h.spec.scaleTargetRef.name === 'web'),
+    },
+    {
+      description: 'HPA scales the deployment beyond 2 replicas',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'web');
+        return !!dep && dep.spec.replicas > 2;
+      },
+    },
+    {
+      description: 'More than 2 "web" pods Running',
+      check: (s: ClusterState) => {
+        return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length > 2;
+      },
+    },
   ],
   lecture: {
     sections: [
@@ -273,28 +291,7 @@ export const lesson20: Lesson = {
       daemonSets: [],
       jobs: [],
       cronJobs: [],
-      hpas: [
-        {
-          kind: 'HorizontalPodAutoscaler' as const,
-          metadata: {
-            name: 'web-hpa',
-            uid: generateUID(),
-            labels: {},
-            creationTimestamp: Date.now() - 60000,
-          },
-          spec: {
-            scaleTargetRef: { kind: 'Deployment', name: 'web' },
-            minReplicas: 2,
-            maxReplicas: 8,
-            targetCPUUtilizationPercentage: 50,
-          },
-          status: {
-            currentReplicas: 2,
-            desiredReplicas: 2,
-            currentCPUUtilizationPercentage: 85,
-          },
-        },
-      ],
+      hpas: [],
       helmReleases: [],
     };
   },
@@ -321,6 +318,12 @@ export const lesson20: Lesson = {
     return state;
   },
   goalCheck: (state) => {
+    // HPA must exist targeting "web"
+    const hpa = state.hpas.find(
+      (h) => h.spec.scaleTargetRef.name === 'web'
+    );
+    if (!hpa) return false;
+
     const dep = state.deployments.find((d) => d.metadata.name === 'web');
     if (!dep) return false;
 

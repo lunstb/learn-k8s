@@ -1,20 +1,38 @@
 import { useSimulatorStore } from '../simulation/store';
 import { parseCommand } from './parser';
 import type { ParsedCommand } from './parser';
-import type { Deployment, Pod, Service, Namespace, ConfigMap, Secret, Ingress, StatefulSet, DaemonSet, Job, HorizontalPodAutoscaler } from '../simulation/types';
+import type { Deployment, Pod, Service, Namespace, ConfigMap, Secret, Ingress, StatefulSet, DaemonSet, Job, CronJob, HorizontalPodAutoscaler } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
+import { parseYaml } from './yaml-parser';
 
 export function executeCommand(input: string): string[] {
   const store = useSimulatorStore.getState();
 
   // Handle special commands
-  const trimmed = input.trim().toLowerCase();
-  if (trimmed === 'help' || trimmed === 'kubectl help') {
+  const trimmed = input.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === 'help' || lower === 'kubectl help') {
     return getHelpText();
   }
-  if (trimmed === 'clear') {
+  if (lower === 'clear') {
     store.clearOutput();
     return [];
+  }
+  if (lower === 'hint') {
+    store.revealNextHint();
+    return [];
+  }
+
+  // Auto-detect bare YAML pasting (multi-line starting with apiVersion: or kind:)
+  if (trimmed.includes('\n') && /^(apiVersion|kind)\s*:/m.test(trimmed)) {
+    return handleApplyYaml(trimmed);
+  }
+
+  // Handle "kubectl apply -f -" with YAML content after the command
+  if (/^(kubectl\s+)?apply\s+-f\s+-\s*\n/i.test(trimmed)) {
+    const yamlStart = trimmed.indexOf('\n');
+    const yamlContent = trimmed.substring(yamlStart + 1);
+    return handleApplyYaml(yamlContent);
   }
 
   const result = parseCommand(input);
@@ -52,6 +70,18 @@ export function executeCommand(input: string): string[] {
       return handleHelmUninstall(cmd);
     case 'autoscale':
       return handleAutoscale(cmd);
+    case 'logs':
+      return handleLogs(cmd);
+    case 'apply':
+      return handleApply(cmd);
+    case 'label':
+      return handleLabel(cmd);
+    case 'drain':
+      return handleDrain(cmd);
+    case 'taint':
+      return handleTaint(cmd);
+    case 'patch':
+      return handlePatch(cmd);
     default:
       return [`Error: Unimplemented action "${cmd.action}"`];
   }
@@ -469,13 +499,13 @@ function handleCreate(cmd: ParsedCommand): string[] {
 
   if (cmd.resourceType === 'cronjob') {
     if (!cmd.resourceName) {
-      return ['Error: Missing cronjob name. Usage: kubectl create cronjob <name> --image=<image> --schedule=every-5-ticks'];
+      return ['Error: Missing cronjob name. Usage: kubectl create cronjob <name> --image=<image> --schedule="*/5 * * * *"'];
     }
     if (store.cluster.cronJobs.find((c) => c.metadata.name === cmd.resourceName)) {
       return [`Error: cronjob "${cmd.resourceName}" already exists`];
     }
     const image = cmd.flags.image || 'busybox';
-    const schedule = cmd.flags.schedule || 'every-5-ticks';
+    const schedule = cmd.flags.schedule || '*/5 * * * *';
     const store2 = useSimulatorStore.getState();
     store2.addCronJob({
       kind: 'CronJob',
@@ -1474,6 +1504,581 @@ function handleAutoscale(cmd: ParsedCommand): string[] {
   return [`horizontalpodautoscaler.autoscaling/${cmd.resourceName} autoscaled`];
 }
 
+function handleLogs(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  if (!cmd.resourceName) {
+    return ['Error: Missing pod name. Usage: kubectl logs <pod-name> [--tail=N]'];
+  }
+  const pod = store.cluster.pods.find(
+    (p) => p.metadata.name === cmd.resourceName && !p.metadata.deletionTimestamp
+  );
+  if (!pod) {
+    return [`Error: pod "${cmd.resourceName}" not found`];
+  }
+  const logs = pod.spec.logs || [];
+  if (logs.length === 0) {
+    return [`(no logs available for pod "${cmd.resourceName}")`];
+  }
+  const tail = cmd.flags.tail ? parseInt(cmd.flags.tail, 10) : 0;
+  if (tail > 0) {
+    return logs.slice(-tail);
+  }
+  return [...logs];
+}
+
+function handleApply(_cmd: ParsedCommand): string[] {
+  return ['Error: kubectl apply requires YAML input. Use: kubectl apply -f - (then paste YAML), or paste YAML directly.'];
+}
+
+function handleApplyYaml(yamlContent: string): string[] {
+  try {
+    const doc = parseYaml(yamlContent) as Record<string, unknown>;
+    const kind = String(doc.kind || '').toLowerCase();
+    const metadata = doc.metadata as Record<string, unknown> | undefined;
+    const name = String(metadata?.name || '');
+
+    if (!kind) return ['Error: YAML must include a "kind" field.'];
+    if (!name) return ['Error: YAML metadata.name is required.'];
+
+    switch (kind) {
+      case 'deployment': return applyDeployment(doc, name);
+      case 'pod': return applyPod(doc, name);
+      case 'service': return applyService(doc, name);
+      case 'configmap': return applyConfigMap(doc, name);
+      case 'secret': return applySecret(doc, name);
+      case 'job': return applyJob(doc, name);
+      case 'cronjob': return applyCronJob(doc, name);
+      case 'ingress': return applyIngress(doc, name);
+      case 'statefulset': return applyStatefulSet(doc, name);
+      default: return [`Error: Unsupported kind "${doc.kind}" for apply.`];
+    }
+  } catch (e) {
+    return [`Error: Failed to parse YAML: ${e instanceof Error ? e.message : String(e)}`];
+  }
+}
+
+function extractLabels(metadata: Record<string, unknown>): Record<string, string> {
+  const labels = metadata?.labels as Record<string, unknown> | undefined;
+  if (!labels) return {};
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(labels)) {
+    result[k] = String(v ?? '');
+  }
+  return result;
+}
+
+function extractPodSpec(specObj: Record<string, unknown>): { image: string; readinessProbe?: import('../simulation/types').Probe; livenessProbe?: import('../simulation/types').Probe; envFrom?: { configMapRef?: string; secretRef?: string }[]; resources?: import('../simulation/types').ResourceRequirements } {
+  const containers = specObj.containers as Array<Record<string, unknown>> | undefined;
+  const container = containers?.[0] || specObj;
+  const image = String(container.image || 'nginx');
+  const result: ReturnType<typeof extractPodSpec> = { image };
+
+  if (container.readinessProbe) {
+    const probe = container.readinessProbe as Record<string, unknown>;
+    const httpGet = probe.httpGet as Record<string, unknown> | undefined;
+    result.readinessProbe = {
+      type: httpGet ? 'httpGet' : probe.tcpSocket ? 'tcpSocket' : 'exec',
+      path: httpGet ? String(httpGet.path || '/') : undefined,
+      port: httpGet ? Number(httpGet.port || 80) : (probe.tcpSocket as Record<string, unknown>)?.port ? Number((probe.tcpSocket as Record<string, unknown>).port) : undefined,
+      initialDelaySeconds: probe.initialDelaySeconds ? Number(probe.initialDelaySeconds) : undefined,
+      periodSeconds: probe.periodSeconds ? Number(probe.periodSeconds) : undefined,
+      failureThreshold: probe.failureThreshold ? Number(probe.failureThreshold) : undefined,
+    };
+  }
+
+  if (container.livenessProbe) {
+    const probe = container.livenessProbe as Record<string, unknown>;
+    const httpGet = probe.httpGet as Record<string, unknown> | undefined;
+    result.livenessProbe = {
+      type: httpGet ? 'httpGet' : probe.tcpSocket ? 'tcpSocket' : 'exec',
+      path: httpGet ? String(httpGet.path || '/') : undefined,
+      port: httpGet ? Number(httpGet.port || 80) : undefined,
+      initialDelaySeconds: probe.initialDelaySeconds ? Number(probe.initialDelaySeconds) : undefined,
+      periodSeconds: probe.periodSeconds ? Number(probe.periodSeconds) : undefined,
+      failureThreshold: probe.failureThreshold ? Number(probe.failureThreshold) : undefined,
+    };
+  }
+
+  if (container.envFrom) {
+    const envFromArr = container.envFrom as Array<Record<string, unknown>>;
+    result.envFrom = envFromArr.map((e) => ({
+      configMapRef: e.configMapRef ? String((e.configMapRef as Record<string, unknown>).name || '') : undefined,
+      secretRef: e.secretRef ? String((e.secretRef as Record<string, unknown>).name || '') : undefined,
+    }));
+  }
+
+  if (container.resources) {
+    result.resources = container.resources as import('../simulation/types').ResourceRequirements;
+  }
+
+  return result;
+}
+
+function applyDeployment(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.deployments.find((d) => d.metadata.name === name);
+  const spec = doc.spec as Record<string, unknown> || {};
+  const template = spec.template as Record<string, unknown> || {};
+  const templateMeta = template.metadata as Record<string, unknown> || {};
+  const templateSpec = template.spec as Record<string, unknown> || {};
+  const metadata = doc.metadata as Record<string, unknown> || {};
+  const selectorObj = spec.selector as Record<string, unknown> | undefined;
+  const matchLabels = (selectorObj?.matchLabels || {}) as Record<string, string>;
+  const replicas = spec.replicas ? Number(spec.replicas) : 1;
+  const podSpec = extractPodSpec(templateSpec);
+  const templateLabels = extractLabels(templateMeta);
+  const labels = extractLabels(metadata);
+
+  if (existing) {
+    store.updateDeployment(existing.metadata.uid, {
+      spec: {
+        ...existing.spec,
+        replicas,
+        selector: Object.keys(matchLabels).length > 0 ? matchLabels : existing.spec.selector,
+        template: {
+          labels: Object.keys(templateLabels).length > 0 ? templateLabels : existing.spec.template.labels,
+          spec: { ...existing.spec.template.spec, ...podSpec },
+        },
+      },
+    });
+    return [`deployment.apps/${name} configured`];
+  }
+
+  const dep: Deployment = {
+    kind: 'Deployment',
+    metadata: {
+      name,
+      uid: generateUID(),
+      labels: Object.keys(labels).length > 0 ? labels : { app: name },
+      creationTimestamp: Date.now(),
+    },
+    spec: {
+      replicas,
+      selector: Object.keys(matchLabels).length > 0 ? matchLabels : { app: name },
+      template: {
+        labels: Object.keys(templateLabels).length > 0 ? templateLabels : { app: name },
+        spec: podSpec,
+      },
+      strategy: { type: 'RollingUpdate', maxSurge: 1, maxUnavailable: 1 },
+    },
+    status: { replicas: 0, updatedReplicas: 0, readyReplicas: 0, availableReplicas: 0, conditions: [] },
+  };
+  store.addDeployment(dep);
+  store.addEvent({
+    timestamp: Date.now(), tick: store.cluster.tick,
+    type: 'Normal', reason: 'Created', objectKind: 'Deployment', objectName: name,
+    message: `Created deployment "${name}" with image ${podSpec.image}`,
+  });
+  return [`deployment.apps/${name} created`];
+}
+
+function applyPod(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.pods.find((p) => p.metadata.name === name && !p.metadata.deletionTimestamp);
+  if (existing) {
+    return [`pod/${name} configured (unchanged — pods are mostly immutable)`];
+  }
+  const spec = doc.spec as Record<string, unknown> || {};
+  const metadata = doc.metadata as Record<string, unknown> || {};
+  const podSpec = extractPodSpec(spec);
+  const pod: Pod = {
+    kind: 'Pod',
+    metadata: { name, uid: generateUID(), labels: extractLabels(metadata), creationTimestamp: Date.now() },
+    spec: podSpec,
+    status: { phase: 'Pending', tickCreated: store.cluster.tick },
+  };
+  store.addPod(pod);
+  return [`pod/${name} created`];
+}
+
+function applyService(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.services.find((s) => s.metadata.name === name);
+  const spec = doc.spec as Record<string, unknown> || {};
+  const selectorObj = spec.selector as Record<string, string> || {};
+  const port = spec.port ? Number(spec.port) : (spec.ports as Array<Record<string, unknown>>)?.[0]?.port ? Number((spec.ports as Array<Record<string, unknown>>)[0].port) : 80;
+
+  if (existing) {
+    // Update selector and port
+    store.removeService(existing.metadata.uid);
+  }
+  const svc: Service = {
+    kind: 'Service',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    spec: { selector: selectorObj, port },
+    status: { endpoints: [] },
+  };
+  store.addService(svc);
+  return [existing ? `service/${name} configured` : `service/${name} created`];
+}
+
+function applyConfigMap(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.configMaps.find((c) => c.metadata.name === name);
+  const data: Record<string, string> = {};
+  if (doc.data) {
+    for (const [k, v] of Object.entries(doc.data as Record<string, unknown>)) {
+      data[k] = String(v ?? '');
+    }
+  }
+  if (existing) {
+    store.removeConfigMap(existing.metadata.uid);
+  }
+  const cm: ConfigMap = {
+    kind: 'ConfigMap',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    data,
+  };
+  store.addConfigMap(cm);
+  return [existing ? `configmap/${name} configured` : `configmap/${name} created`];
+}
+
+function applySecret(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.secrets.find((s) => s.metadata.name === name);
+  const data: Record<string, string> = {};
+  if (doc.data) {
+    for (const [k, v] of Object.entries(doc.data as Record<string, unknown>)) {
+      data[k] = String(v ?? '');
+    }
+  }
+  if (existing) {
+    store.removeSecret(existing.metadata.uid);
+  }
+  const secret: Secret = {
+    kind: 'Secret',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    type: String(doc.type || 'Opaque'),
+    data,
+  };
+  store.addSecret(secret);
+  return [existing ? `secret/${name} configured` : `secret/${name} created`];
+}
+
+function applyJob(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.jobs.find((j) => j.metadata.name === name);
+  if (existing) return [`job.batch/${name} configured (unchanged)`];
+  const spec = doc.spec as Record<string, unknown> || {};
+  const template = spec.template as Record<string, unknown> || {};
+  const templateSpec = template.spec as Record<string, unknown> || {};
+  const podSpec = extractPodSpec(templateSpec);
+  const job: Job = {
+    kind: 'Job',
+    metadata: { name, uid: generateUID(), labels: { 'job-name': name }, creationTimestamp: Date.now() },
+    spec: {
+      completions: spec.completions ? Number(spec.completions) : 1,
+      parallelism: spec.parallelism ? Number(spec.parallelism) : 1,
+      backoffLimit: spec.backoffLimit ? Number(spec.backoffLimit) : 6,
+      template: { labels: { 'job-name': name }, spec: { ...podSpec, completionTicks: 2, restartPolicy: 'Never' } },
+    },
+    status: { succeeded: 0, failed: 0, active: 0, startTime: store.cluster.tick },
+  };
+  store.addJob(job);
+  return [`job.batch/${name} created`];
+}
+
+function applyCronJob(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.cronJobs.find((c) => c.metadata.name === name);
+  if (existing) return [`cronjob.batch/${name} configured (unchanged)`];
+  const spec = doc.spec as Record<string, unknown> || {};
+  const schedule = String(spec.schedule || '*/5 * * * *');
+  const jobTemplate = spec.jobTemplate as Record<string, unknown> || {};
+  const jobSpec = jobTemplate.spec as Record<string, unknown> || {};
+  const template = jobSpec.template as Record<string, unknown> || {};
+  const templateSpec = template.spec as Record<string, unknown> || {};
+  const podSpec = extractPodSpec(templateSpec);
+  const cj: CronJob = {
+    kind: 'CronJob',
+    metadata: { name, uid: generateUID(), labels: { 'cronjob-name': name }, creationTimestamp: Date.now() },
+    spec: {
+      schedule,
+      jobTemplate: {
+        spec: {
+          completions: 1, parallelism: 1, backoffLimit: 6,
+          template: { labels: { 'job-name': name }, spec: { ...podSpec, completionTicks: 2, restartPolicy: 'Never' } },
+        },
+      },
+    },
+    status: { active: 0 },
+  };
+  store.addCronJob(cj);
+  return [`cronjob.batch/${name} created`];
+}
+
+function applyIngress(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.ingresses.find((i) => i.metadata.name === name);
+  const spec = doc.spec as Record<string, unknown> || {};
+  const rulesArr = spec.rules as Array<Record<string, unknown>> || [];
+  const rules: Ingress['spec']['rules'] = [];
+  for (const rule of rulesArr) {
+    const host = String(rule.host || '*');
+    const http = rule.http as Record<string, unknown> | undefined;
+    const paths = (http?.paths || []) as Array<Record<string, unknown>>;
+    for (const pathEntry of paths) {
+      const path = String(pathEntry.path || '/');
+      const backend = pathEntry.backend as Record<string, unknown> | undefined;
+      const svcObj = backend?.service as Record<string, unknown> | undefined;
+      const serviceName = svcObj ? String(svcObj.name || '') : String(pathEntry.serviceName || '');
+      const portObj = svcObj?.port as Record<string, unknown> | undefined;
+      const servicePort = portObj ? Number(portObj.number || 80) : Number(pathEntry.servicePort || 80);
+      rules.push({ host, path, serviceName, servicePort });
+    }
+    // Simple rule without http paths
+    if (paths.length === 0 && rule.serviceName) {
+      rules.push({ host, path: '/', serviceName: String(rule.serviceName), servicePort: Number(rule.servicePort || 80) });
+    }
+  }
+  if (existing) {
+    store.removeIngress(existing.metadata.uid);
+  }
+  const ing: Ingress = {
+    kind: 'Ingress',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    spec: { rules },
+    status: { loadBalancer: { ip: '10.0.0.1' } },
+  };
+  store.addIngress(ing);
+  return [existing ? `ingress.networking.k8s.io/${name} configured` : `ingress.networking.k8s.io/${name} created`];
+}
+
+function applyStatefulSet(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.statefulSets.find((s) => s.metadata.name === name);
+  if (existing) return [`statefulset.apps/${name} configured (unchanged)`];
+  const spec = doc.spec as Record<string, unknown> || {};
+  const template = spec.template as Record<string, unknown> || {};
+  const templateSpec = template.spec as Record<string, unknown> || {};
+  const podSpec = extractPodSpec(templateSpec);
+  const replicas = spec.replicas ? Number(spec.replicas) : 1;
+  const sts: StatefulSet = {
+    kind: 'StatefulSet',
+    metadata: { name, uid: generateUID(), labels: { app: name }, creationTimestamp: Date.now() },
+    spec: {
+      replicas,
+      selector: { app: name },
+      serviceName: String(spec.serviceName || name),
+      template: { labels: { app: name }, spec: podSpec },
+    },
+    status: { replicas: 0, readyReplicas: 0, currentReplicas: 0 },
+  };
+  store.addStatefulSet(sts);
+  return [`statefulset.apps/${name} created`];
+}
+
+function handleLabel(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  if (!cmd.resourceName) {
+    return ['Error: Missing resource name. Usage: kubectl label <type> <name> key=value'];
+  }
+  const labelArgs = (cmd.flags['_labels'] || '').split(',').filter(Boolean);
+  if (labelArgs.length === 0) {
+    return ['Error: No labels specified. Usage: kubectl label <type> <name> key=value [key-]'];
+  }
+
+  // Find the resource
+  type Labeled = { metadata: { uid: string; name: string; labels: Record<string, string> } };
+  let resource: Labeled | undefined;
+  let kindName = cmd.resourceType;
+
+  if (cmd.resourceType === 'pod') {
+    resource = store.cluster.pods.find((p) => p.metadata.name === cmd.resourceName && !p.metadata.deletionTimestamp);
+  } else if (cmd.resourceType === 'deployment') {
+    resource = store.cluster.deployments.find((d) => d.metadata.name === cmd.resourceName);
+    kindName = 'deployment';
+  } else if (cmd.resourceType === 'node') {
+    resource = store.cluster.nodes.find((n) => n.metadata.name === cmd.resourceName);
+  } else if (cmd.resourceType === 'service') {
+    resource = store.cluster.services.find((s) => s.metadata.name === cmd.resourceName);
+  } else {
+    return [`Error: kubectl label does not support resource type "${cmd.resourceType}" in this simulator.`];
+  }
+
+  if (!resource) {
+    return [`Error: ${cmd.resourceType} "${cmd.resourceName}" not found`];
+  }
+
+  const newLabels = { ...resource.metadata.labels };
+  for (const arg of labelArgs) {
+    if (arg.endsWith('-')) {
+      // Remove label
+      const key = arg.slice(0, -1);
+      delete newLabels[key];
+    } else if (arg.includes('=')) {
+      const [key, ...rest] = arg.split('=');
+      newLabels[key] = rest.join('=');
+    }
+  }
+
+  // Update the resource labels directly
+  resource.metadata.labels = newLabels;
+
+  return [`${kindName}/${cmd.resourceName} labeled`];
+}
+
+function handleDrain(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  if (!cmd.resourceName) {
+    return ['Error: Missing node name. Usage: kubectl drain <node-name>'];
+  }
+  const node = store.cluster.nodes.find((n) => n.metadata.name === cmd.resourceName);
+  if (!node) {
+    return [`Error: node "${cmd.resourceName}" not found`];
+  }
+
+  // Cordon the node (mark unschedulable)
+  store.updateNode(node.metadata.uid, {
+    spec: { ...node.spec, unschedulable: true },
+    status: {
+      ...node.status,
+      conditions: [{ type: 'Ready' as const, status: 'False' as const }],
+    },
+  });
+
+  // Evict all non-DaemonSet pods on this node
+  const podsOnNode = store.cluster.pods.filter(
+    (p) => p.spec.nodeName === cmd.resourceName && !p.metadata.deletionTimestamp
+  );
+  const daemonSetUids = new Set(store.cluster.daemonSets.map((ds) => ds.metadata.uid));
+  const evicted: string[] = [];
+  for (const pod of podsOnNode) {
+    // Skip DaemonSet pods
+    if (pod.metadata.ownerReference && daemonSetUids.has(pod.metadata.ownerReference.uid)) continue;
+    store.removePod(pod.metadata.uid);
+    evicted.push(pod.metadata.name);
+    store.addEvent({
+      timestamp: Date.now(), tick: store.cluster.tick,
+      type: 'Normal', reason: 'Evicted', objectKind: 'Pod', objectName: pod.metadata.name,
+      message: `Evicted pod "${pod.metadata.name}" from node "${cmd.resourceName}"`,
+    });
+  }
+
+  store.addEvent({
+    timestamp: Date.now(), tick: store.cluster.tick,
+    type: 'Warning', reason: 'NodeDrained', objectKind: 'Node', objectName: cmd.resourceName,
+    message: `Node "${cmd.resourceName}" drained, ${evicted.length} pod(s) evicted`,
+  });
+
+  const lines = [`node/${cmd.resourceName} cordoned`];
+  for (const name of evicted) {
+    lines.push(`evicting pod ${name}`);
+  }
+  lines.push(`node/${cmd.resourceName} drained`);
+  return lines;
+}
+
+function handleTaint(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  if (!cmd.resourceName) {
+    return ['Error: Missing node name. Usage: kubectl taint node <name> key=value:Effect'];
+  }
+  const node = store.cluster.nodes.find((n) => n.metadata.name === cmd.resourceName);
+  if (!node) {
+    return [`Error: node "${cmd.resourceName}" not found`];
+  }
+
+  const taintArgs = (cmd.flags['_taints'] || '').split(',').filter(Boolean);
+  if (taintArgs.length === 0) {
+    return ['Error: No taint specified. Usage: kubectl taint node <name> key=value:Effect'];
+  }
+
+  const taints = [...(node.spec.taints || [])];
+
+  for (const arg of taintArgs) {
+    // Removal: key:Effect- or key-
+    if (arg.endsWith('-')) {
+      const spec = arg.slice(0, -1);
+      if (spec.includes(':')) {
+        const [key, effect] = spec.split(':');
+        const idx = taints.findIndex((t) => t.key === key && t.effect === effect);
+        if (idx >= 0) taints.splice(idx, 1);
+      } else {
+        // Remove all taints with this key
+        for (let i = taints.length - 1; i >= 0; i--) {
+          if (taints[i].key === spec) taints.splice(i, 1);
+        }
+      }
+    } else {
+      // Add: key=value:Effect or key:Effect
+      const colonIdx = arg.lastIndexOf(':');
+      if (colonIdx === -1) {
+        return [`Error: Invalid taint format "${arg}". Expected key=value:Effect`];
+      }
+      const effect = arg.substring(colonIdx + 1) as 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute';
+      const keyValue = arg.substring(0, colonIdx);
+      let key: string, value: string | undefined;
+      if (keyValue.includes('=')) {
+        [key, value] = keyValue.split('=');
+      } else {
+        key = keyValue;
+      }
+      // Replace existing taint with same key+effect, or add new
+      const existingIdx = taints.findIndex((t) => t.key === key && t.effect === effect);
+      if (existingIdx >= 0) {
+        taints[existingIdx] = { key, value, effect };
+      } else {
+        taints.push({ key, value, effect });
+      }
+    }
+  }
+
+  store.updateNode(node.metadata.uid, {
+    spec: { ...node.spec, taints },
+  });
+
+  return [`node/${cmd.resourceName} tainted`];
+}
+
+function handlePatch(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  if (!cmd.resourceName) {
+    return ['Error: Missing resource name. Usage: kubectl patch <type> <name> --selector=key=value'];
+  }
+
+  if (cmd.resourceType === 'service') {
+    const svc = store.cluster.services.find((s) => s.metadata.name === cmd.resourceName);
+    if (!svc) return [`Error: service "${cmd.resourceName}" not found`];
+
+    let patched = false;
+    if (cmd.flags['selector']) {
+      const newSelector: Record<string, string> = {};
+      for (const pair of cmd.flags['selector'].split(',')) {
+        const [k, ...rest] = pair.split('=');
+        newSelector[k] = rest.join('=');
+      }
+      svc.spec.selector = newSelector;
+      patched = true;
+    }
+    if (cmd.flags['port']) {
+      svc.spec.port = parseInt(cmd.flags['port'], 10);
+      patched = true;
+    }
+    if (!patched) {
+      return ['Error: Nothing to patch. Use --selector=key=value or --port=N'];
+    }
+    return [`service/${cmd.resourceName} patched`];
+  }
+
+  if (cmd.resourceType === 'deployment') {
+    const dep = store.cluster.deployments.find((d) => d.metadata.name === cmd.resourceName);
+    if (!dep) return [`Error: deployment "${cmd.resourceName}" not found`];
+
+    let patched = false;
+    if (cmd.flags['image']) {
+      dep.spec.template.spec.image = cmd.flags['image'];
+      patched = true;
+    }
+    if (!patched) {
+      return ['Error: Nothing to patch. Use --image=<image>'];
+    }
+    return [`deployment.apps/${cmd.resourceName} patched`];
+  }
+
+  return [`Error: patch is not supported for resource type "${cmd.resourceType}". Supported: service, deployment`];
+}
+
 function padRow(cols: string[]): string {
   const widths = [28, 18, 14, 14, 30];
   return cols.map((col, i) => col.padEnd(widths[i] || 20)).join('');
@@ -1493,17 +2098,23 @@ function getHelpText(): string[] {
     '  kubectl create statefulset <name> --image=<image> [--replicas=N]',
     '  kubectl create daemonset <name> --image=<image>',
     '  kubectl create job <name> --image=<image> [--completions=N]',
-    '  kubectl create cronjob <name> --image=<image> --schedule=every-N-ticks',
+    '  kubectl create cronjob <name> --image=<image> --schedule="*/5 * * * *"',
     '',
     '  kubectl get deployments|pods|services|nodes|events|namespaces|...',
     '  kubectl get configmaps|secrets|ingresses|statefulsets|daemonsets|jobs|cronjobs|hpa',
     '  kubectl describe <resource-type> <name>',
+    '  kubectl logs <pod-name> [--tail=N]',
     '  kubectl scale deployment|replicaset|statefulset <name> --replicas=N',
     '  kubectl set image deployment/<name> <image>',
     '  kubectl delete <resource-type> <name>',
     '  kubectl rollout status deployment/<name>',
+    '  kubectl patch service <name> --selector=key=value [--port=N]',
+    '  kubectl label <resource-type> <name> key=value [key-]',
     '  kubectl cordon|uncordon <node-name>',
+    '  kubectl drain <node-name>',
+    '  kubectl taint node <name> key=value:Effect [key:Effect-]',
     '  kubectl autoscale deployment <name> --min=N --max=N --cpu-percent=N',
+    '  kubectl apply -f - (then paste YAML, or paste YAML directly)',
     '',
     '  helm install <release-name> <chart>',
     '  helm list',
@@ -1514,6 +2125,7 @@ function getHelpText(): string[] {
     '',
     'Controls:',
     '  Press "Reconcile" or use Ctrl+Enter to advance one tick.',
+    '  Shift+Enter for multi-line input (YAML). Ctrl+Enter to submit.',
     '  Press "Reset" to restart the current lesson.',
     '',
   ];

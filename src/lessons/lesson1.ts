@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, templateHash } from '../simulation/utils';
 
 export const lesson1: Lesson = {
@@ -12,8 +13,22 @@ export const lesson1: Lesson = {
     'The RS controller brought the cluster to desired state. You declared 3 pods, the controller made it happen. ' +
     'This is the core K8s pattern: declare what you want, controllers make it happen.',
   hints: [
-    'Click the "Reconcile" button to advance the control loop.',
-    'The first reconcile creates Pending pods. The second tick transitions them to Running.',
+    { text: 'The Reconcile button advances the control loop by one tick.' },
+    { text: 'The first reconcile creates Pending pods. The second tick transitions them to Running.' },
+  ],
+  goals: [
+    {
+      description: 'Reconcile to create 3 Pending pods from the ReplicaSet',
+      check: (s: ClusterState) => s.pods.filter(p => p.metadata.ownerReference && !p.metadata.deletionTimestamp).length >= 3,
+    },
+    {
+      description: 'Reconcile again until all 3 pods are Running',
+      check: (s: ClusterState) => {
+        const rs = s.replicaSets.find(r => r.metadata.name === 'web-app-rs');
+        if (!rs) return false;
+        return s.pods.filter(p => p.metadata.ownerReference?.uid === rs.metadata.uid && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length === 3;
+      },
+    },
   ],
   lecture: {
     sections: [

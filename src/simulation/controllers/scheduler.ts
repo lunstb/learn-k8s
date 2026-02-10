@@ -25,9 +25,9 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
   );
 
   for (const pod of unscheduledPods) {
-    // Find a Ready node with capacity
+    // Find a Ready node with capacity (also check unschedulable flag and taints)
     const readyNodes = cluster.nodes.filter(
-      (n) => n.status.conditions[0].status === 'True'
+      (n) => n.status.conditions[0].status === 'True' && !n.spec.unschedulable
     );
 
     // Calculate allocated pods per node
@@ -42,8 +42,25 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
       nodeAllocations.set(n.metadata.name, count);
     }
 
+    // Filter out nodes with taints the pod doesn't tolerate
+    const toleratedNodes = readyNodes.filter((n) => {
+      const taints = n.spec.taints || [];
+      for (const taint of taints) {
+        if (taint.effect === 'NoSchedule' || taint.effect === 'NoExecute') {
+          const tolerations = pod.spec.tolerations || [];
+          const tolerated = tolerations.some((t) => {
+            if (t.operator === 'Exists' && t.key === taint.key) return true;
+            if (t.key === taint.key && t.value === taint.value && (!t.effect || t.effect === taint.effect)) return true;
+            return false;
+          });
+          if (!tolerated) return false;
+        }
+      }
+      return true;
+    });
+
     // Find a node with capacity (least loaded first)
-    const availableNode = readyNodes
+    const availableNode = toleratedNodes
       .filter((n) => {
         const allocated = nodeAllocations.get(n.metadata.name) || 0;
         return allocated < n.spec.capacity.pods;

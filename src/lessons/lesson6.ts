@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson6: Lesson = {
@@ -8,15 +9,39 @@ export const lesson6: Lesson = {
     'Pods run on nodes. The scheduler assigns Pending pods to nodes with capacity, and you control placement with cordon and uncordon.',
   mode: 'full',
   goalDescription:
-    'Cordon a node, observe pod eviction and rescheduling, then uncordon to restore the cluster.',
+    'Cordon node-3 to mark it NotReady, observe pod eviction and rescheduling on healthy nodes, then uncordon node-3 to restore the cluster. End state: 6 Running pods across 3 Ready nodes.',
   successMessage:
     'You\'ve mastered scheduling: cordon prevents placement, drain evicts pods, the RS recreates them, ' +
     'and the scheduler places them on healthy nodes.',
   hints: [
-    'Use: kubectl cordon node-3 to mark the node as NotReady.',
-    'Reconcile to see pods evicted from the NotReady node.',
-    'Reconcile again to see replacement pods scheduled to healthy nodes.',
-    'Use: kubectl uncordon node-3 to restore the node.',
+    { text: 'Use kubectl cordon to mark a node as unschedulable (NotReady).' },
+    { text: 'kubectl cordon node-3', exact: true },
+    { text: 'After pods are evicted and rescheduled, restore the node.' },
+    { text: 'kubectl uncordon node-3', exact: true },
+  ],
+  goals: [
+    {
+      description: 'Cordon node-3 (mark as NotReady)',
+      check: (s: ClusterState) => {
+        const node = s.nodes.find(n => n.metadata.name === 'node-3');
+        return !!node && (node.status.conditions[0].status === 'False' || node.spec.unschedulable === true);
+      },
+    },
+    {
+      description: 'Uncordon node-3 (restore to Ready)',
+      check: (s: ClusterState) => {
+        const node = s.nodes.find(n => n.metadata.name === 'node-3');
+        return !!node && node.status.conditions[0].status === 'True';
+      },
+    },
+    {
+      description: 'All 6 pods Running across 3 Ready nodes',
+      check: (s: ClusterState) => {
+        const running = s.pods.filter(p => p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+        const ready = s.nodes.filter(n => n.status.conditions[0].status === 'True');
+        return running.length === 6 && ready.length === 3;
+      },
+    },
   ],
   lecture: {
     sections: [

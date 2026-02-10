@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
 export const lesson17: Lesson = {
@@ -8,15 +9,28 @@ export const lesson17: Lesson = {
     'DaemonSets ensure exactly one pod runs on every node — perfect for logging agents, monitoring daemons, and network plugins.',
   mode: 'full',
   goalDescription:
-    'Create a DaemonSet "log-collector" and verify that one pod is running on each node in the cluster.',
+    'Create a DaemonSet named "log-collector" with image fluentd:latest. Verify one pod runs on each node in the cluster.',
   successMessage:
     'The DaemonSet is running one log-collector pod on every node. DaemonSets automatically adapt to cluster changes — ' +
     'when a new node joins, a pod is created; when a node leaves, the pod is cleaned up.',
   hints: [
-    'Create a DaemonSet: kubectl create daemonset log-collector --image=fluentd:latest',
-    'Click "Reconcile" to let the DaemonSet controller schedule pods on all nodes.',
-    'Reconcile again until pods transition from Pending to Running.',
-    'Verify with: kubectl get pods — you should see one pod per node.',
+    { text: 'The syntax is: kubectl create daemonset <name> --image=<image>. You don\'t specify replicas — a DaemonSet runs one pod per node automatically.' },
+    { text: 'kubectl create daemonset log-collector --image=fluentd:latest', exact: true },
+    { text: 'Reconcile multiple times until pods transition from Pending to Running on all nodes.' },
+  ],
+  goals: [
+    {
+      description: 'Create a DaemonSet named "log-collector"',
+      check: (s: ClusterState) => !!s.daemonSets.find(ds => ds.metadata.name === 'log-collector'),
+    },
+    {
+      description: 'One Running pod on every Ready node',
+      check: (s: ClusterState) => {
+        const readyNodes = s.nodes.filter(n => n.status.conditions[0].status === 'True');
+        const runningPods = s.pods.filter(p => p.metadata.labels['app'] === 'log-collector' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+        return readyNodes.length > 0 && runningPods.length >= readyNodes.length;
+      },
+    },
   ],
   lecture: {
     sections: [

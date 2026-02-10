@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson5: Lesson = {
@@ -8,15 +9,36 @@ export const lesson5: Lesson = {
     'Services provide a stable address for ephemeral pods, routing traffic only to healthy endpoints.',
   mode: 'full',
   goalDescription:
-    'Create a Service, observe its endpoints, then scale to 5 and verify endpoints update.',
+    'Create a Service named "web-svc" with selector app=web-app on port 80, scale the "web-app" Deployment to 5 replicas, and verify all 5 endpoints are active.',
   successMessage:
     'Services dynamically track endpoints. When you scale up, new Running pods automatically become endpoints. ' +
     'Pending pods are excluded — only Running pods matching the selector serve traffic.',
   hints: [
-    'Create a service: kubectl create service web-svc --selector=app=web-app --port=80',
-    'Use: kubectl get endpoints to see the endpoint list.',
-    'Scale: kubectl scale deployment web-app --replicas=5',
-    'After Reconcile, check endpoints again — they should increase to 5.',
+    { text: 'The syntax for creating a service is: kubectl create service <name> --selector=<key>=<value> --port=<port>' },
+    { text: 'kubectl create service web-svc --selector=app=web-app --port=80', exact: true },
+    { text: 'After the service exists, scale the deployment up.' },
+    { text: 'kubectl scale deployment web-app --replicas=5', exact: true },
+    { text: 'Use kubectl get endpoints to verify all 5 pods are registered.' },
+  ],
+  goals: [
+    {
+      description: 'Create a Service named "web-svc" targeting app=web-app on port 80',
+      check: (s: ClusterState) => !!s.services.find(svc => svc.spec.selector['app'] === 'web-app'),
+    },
+    {
+      description: 'Scale the "web-app" Deployment to 5 replicas',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+        return !!dep && dep.spec.replicas === 5;
+      },
+    },
+    {
+      description: 'Verify the service has 5 endpoints',
+      check: (s: ClusterState) => {
+        const svc = s.services.find(svc => svc.spec.selector['app'] === 'web-app');
+        return !!svc && svc.status.endpoints.length === 5;
+      },
+    },
   ],
   lecture: {
     sections: [

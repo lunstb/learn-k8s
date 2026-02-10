@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 
 export const lesson2: Lesson = {
   id: 2,
@@ -7,15 +8,35 @@ export const lesson2: Lesson = {
     'Learn what pods are, how they move through lifecycle phases, and why managed pods beat standalone ones.',
   mode: 'full',
   goalDescription:
-    'Create a standalone pod and delete it. Then create a Deployment and see self-healing when you delete a managed pod.',
+    'Create a standalone pod named "standalone" with image nginx:1.0 and delete it. Then create a Deployment named "my-app" with image nginx:1.0 and 2 replicas, and observe self-healing when you delete a managed pod.',
   successMessage:
     'Standalone pods vanish when deleted, but managed pods are replaced. Always use Deployments in production.',
   hints: [
-    'Start with: kubectl create pod standalone --image=nginx:1.0',
-    'Reconcile until it is Running, then: kubectl delete pod standalone',
-    'Create the Deployment: kubectl create deployment my-app --image=nginx:1.0 --replicas=2',
-    'Reconcile until 2 pods are Running, then delete one managed pod with: kubectl delete pod <name>',
-    'Reconcile again to see the replacement appear.',
+    { text: 'Start by creating a standalone pod — what command creates a single pod?' },
+    { text: 'kubectl create pod standalone --image=nginx:1.0', exact: true },
+    { text: 'After deleting the standalone pod, create a Deployment for self-healing.' },
+    { text: 'kubectl create deployment my-app --image=nginx:1.0 --replicas=2', exact: true },
+    { text: 'Delete one managed pod and reconcile to see the replacement appear.' },
+  ],
+  goals: [
+    {
+      description: 'Create a standalone pod named "standalone"',
+      check: (s: ClusterState) => s.pods.some(p => p.metadata.name === 'standalone') || s.tick > 0,
+    },
+    {
+      description: 'Create a Deployment named "my-app" with 2 replicas',
+      check: (s: ClusterState) => !!s.deployments.find(d => d.metadata.name === 'my-app'),
+    },
+    {
+      description: 'Get 2 Running pods managed by the "my-app" Deployment',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+        if (!dep) return false;
+        const rs = s.replicaSets.find(r => r.metadata.ownerReference?.uid === dep.metadata.uid && !r.metadata.deletionTimestamp);
+        if (!rs) return false;
+        return s.pods.filter(p => p.metadata.ownerReference?.uid === rs.metadata.uid && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length === 2;
+      },
+    },
   ],
   lecture: {
     sections: [

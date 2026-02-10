@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson21: Lesson = {
@@ -8,15 +9,26 @@ export const lesson21: Lesson = {
     'When pods cannot be scheduled due to insufficient node capacity, cluster autoscalers like Karpenter automatically provision new nodes.',
   mode: 'full',
   goalDescription:
-    'Observe Unschedulable pods trigger Karpenter to provision new nodes, then verify all 5 "web" pods are Running.',
+    'Some "web" pods are Pending/Unschedulable because the cluster lacks node capacity. Reconcile to let Karpenter automatically provision new nodes, then verify all 5 "web" pods are Running.',
   successMessage:
     'Karpenter provisioned new nodes to handle the Unschedulable pods. Cluster autoscaling completes the scaling story: ' +
     'HPA scales pods, Karpenter scales nodes. Together they handle demand at every level.',
   hints: [
-    'Check pod status: kubectl get pods — notice some pods are Pending/Unschedulable.',
-    'Click "Reconcile" — Karpenter detects Unschedulable pods and provisions a new node.',
-    'Reconcile again to see the scheduler assign Pending pods to the new node.',
-    'Continue reconciling until all 5 web pods are Running.',
+    { text: 'Check kubectl get pods — some pods are Pending because no node has capacity.' },
+    { text: 'Karpenter watches for Unschedulable pods and provisions new nodes automatically.' },
+    { text: 'Just keep reconciling — Karpenter will add a node and the scheduler will assign pods to it.' },
+  ],
+  goals: [
+    {
+      description: 'Karpenter provisions a new node for Unschedulable pods',
+      check: (s: ClusterState) => s.nodes.length > 2,
+    },
+    {
+      description: 'All 5 "web" pods are Running',
+      check: (s: ClusterState) => {
+        return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 5;
+      },
+    },
   ],
   lecture: {
     sections: [

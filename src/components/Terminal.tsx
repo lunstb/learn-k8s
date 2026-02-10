@@ -7,8 +7,9 @@ export function Terminal() {
   const [input, setInput] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [isMultiLine, setIsMultiLine] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const terminalOutput = useSimulatorStore((s) => s.terminalOutput);
   const appendOutput = useSimulatorStore((s) => s.appendOutput);
   const tick = useSimulatorStore((s) => s.tick);
@@ -23,11 +24,23 @@ export function Terminal() {
     inputRef.current?.focus();
   }, []);
 
+  // Auto-resize textarea rows
+  useEffect(() => {
+    if (inputRef.current) {
+      const lines = input.split('\n').length;
+      inputRef.current.rows = Math.min(Math.max(lines, 1), 15);
+    }
+  }, [input]);
+
   const handleSubmit = () => {
     const trimmed = input.trim();
     if (!trimmed) return;
 
-    appendOutput(`$ ${trimmed}`);
+    // Show command in output (truncate display for multi-line)
+    const displayCmd = trimmed.includes('\n')
+      ? `${trimmed.split('\n')[0]} ... (${trimmed.split('\n').length} lines)`
+      : trimmed;
+    appendOutput(`$ ${displayCmd}`);
     setHistory((prev) => [trimmed, ...prev]);
     setHistoryIndex(-1);
 
@@ -38,27 +51,46 @@ export function Terminal() {
     appendOutput('');
 
     setInput('');
+    setIsMultiLine(false);
 
     // Check goals after command
     setTimeout(() => useSimulatorStore.getState().checkGoal(), 0);
   };
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter') {
       if (e.ctrlKey) {
-        // Ctrl+Enter = reconcile
-        tick();
+        if (isMultiLine) {
+          // Ctrl+Enter in multi-line mode = submit
+          e.preventDefault();
+          handleSubmit();
+        } else {
+          // Ctrl+Enter in single-line mode = reconcile tick
+          e.preventDefault();
+          tick();
+        }
         return;
       }
+      if (e.shiftKey) {
+        // Shift+Enter = insert newline, enter multi-line mode
+        setIsMultiLine(true);
+        return; // let default textarea behavior insert newline
+      }
+      if (isMultiLine) {
+        // In multi-line mode, Enter inserts newline
+        return;
+      }
+      // Single-line mode, Enter = submit
+      e.preventDefault();
       handleSubmit();
-    } else if (e.key === 'ArrowUp') {
+    } else if (e.key === 'ArrowUp' && !isMultiLine) {
       e.preventDefault();
       if (history.length > 0) {
         const newIndex = Math.min(historyIndex + 1, history.length - 1);
         setHistoryIndex(newIndex);
         setInput(history[newIndex]);
       }
-    } else if (e.key === 'ArrowDown') {
+    } else if (e.key === 'ArrowDown' && !isMultiLine) {
       e.preventDefault();
       if (historyIndex > 0) {
         const newIndex = historyIndex - 1;
@@ -68,6 +100,21 @@ export function Terminal() {
         setHistoryIndex(-1);
         setInput('');
       }
+    } else if (e.key === 'Escape' && isMultiLine) {
+      e.preventDefault();
+      setIsMultiLine(false);
+      setInput('');
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInput(val);
+    // Auto-detect multi-line
+    if (val.includes('\n')) {
+      setIsMultiLine(true);
+    } else if (!val.includes('\n') && isMultiLine) {
+      setIsMultiLine(false);
     }
   };
 
@@ -84,7 +131,7 @@ export function Terminal() {
               line.startsWith('---') ? 'terminal-lesson-header' :
               line.startsWith('Goal:') ? 'terminal-goal' :
               line.startsWith('Hint:') ? 'terminal-hint' :
-              line.includes('✅') ? 'terminal-success' :
+              line.includes('\u2705') ? 'terminal-success' :
               ''
             }`}
           >
@@ -92,19 +139,22 @@ export function Terminal() {
           </div>
         ))}
       </div>
-      <div className="terminal-input-row">
-        <span className="terminal-prompt">$</span>
-        <input
+      <div className={`terminal-input-row ${isMultiLine ? 'terminal-input-multiline' : ''}`}>
+        <span className="terminal-prompt">{isMultiLine ? 'yaml' : '$'}</span>
+        <textarea
           ref={inputRef}
-          type="text"
           className="terminal-input"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder="kubectl create deployment my-app --image=nginx --replicas=3"
+          placeholder={isMultiLine ? 'Paste YAML... (Ctrl+Enter to submit, Esc to cancel)' : 'kubectl create deployment my-app --image=nginx --replicas=3'}
           spellCheck={false}
           autoComplete="off"
+          rows={1}
         />
+        {isMultiLine && (
+          <span className="terminal-multiline-hint">Ctrl+Enter to submit</span>
+        )}
       </div>
     </div>
   );

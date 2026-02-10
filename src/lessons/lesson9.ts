@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
 export const lesson9: Lesson = {
@@ -8,13 +9,27 @@ export const lesson9: Lesson = {
     'Namespaces partition a single cluster into logical groups, providing scope for names and a foundation for resource isolation.',
   mode: 'full',
   goalDescription:
-    'Create a namespace called "dev" and deploy a "web" deployment with 2 running replicas in the default namespace.',
+    'Create a namespace called "dev" and deploy a "web" Deployment with image nginx and 2 Running replicas in the default namespace.',
   successMessage:
     'You now have multiple namespaces and a healthy deployment. Namespaces let teams share a cluster without stepping on each other.',
   hints: [
-    'kubectl create namespace dev',
-    'kubectl create deployment web --image=nginx --replicas=2',
-    'Click Reconcile to let pods reach Running state.',
+    { text: 'Use kubectl create namespace to create a new namespace.' },
+    { text: 'kubectl create namespace dev', exact: true },
+    { text: 'Now create a deployment in the default namespace.' },
+    { text: 'kubectl create deployment web --image=nginx --replicas=2', exact: true },
+  ],
+  goals: [
+    {
+      description: 'Create a namespace called "dev"',
+      check: (s: ClusterState) => s.namespaces.some(ns => ns.metadata.name === 'dev'),
+    },
+    {
+      description: 'Create a "web" Deployment with 2 Running replicas',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'web');
+        return !!dep && (dep.status.readyReplicas || 0) >= 2;
+      },
+    },
   ],
   lecture: {
     sections: [

@@ -52,6 +52,9 @@ export interface SimulatorStore {
   quizAnswers: { choiceIndex: number; correct: boolean }[];
   quizRevealed: boolean;
 
+  // Hint state
+  hintIndex: number;
+
   // Prediction state
   currentStep: number;
   predictionPending: boolean;
@@ -127,6 +130,7 @@ export interface SimulatorStore {
   nextQuizQuestion: () => void;
   startPractice: () => void;
   goToPhase: (phase: LessonPhase) => void;
+  revealNextHint: () => void;
 
   // Predictions
   submitPrediction: (choiceIndex: number) => void;
@@ -190,6 +194,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   quizIndex: 0,
   quizAnswers: [],
   quizRevealed: false,
+  hintIndex: 0,
   currentStep: 0,
   predictionPending: false,
   predictionResult: null,
@@ -842,7 +847,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       '',
       `Goal: ${currentLesson.goalDescription}`,
       '',
-      ...(currentLesson.hints || []).map((h: string) => `Hint: ${h}`),
+      'Type "hint" for a hint if you get stuck.',
       '',
     ];
 
@@ -868,6 +873,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       terminalOutput,
       isAutoRunning: true,
       currentStep: 0,
+      hintIndex: 0,
       predictionPending,
       predictionResult: null,
     });
@@ -887,6 +893,29 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       // The checkmark in the sidebar persists via completedLessonIds.
       get().startPractice();
     }
+  },
+
+  revealNextHint: () => {
+    const { currentLesson, hintIndex } = get();
+    if (!currentLesson?.hints || currentLesson.hints.length === 0) {
+      set((s) => ({
+        terminalOutput: [...s.terminalOutput, 'No hints available for this lesson.', ''],
+      }));
+      return;
+    }
+    if (hintIndex >= currentLesson.hints.length) {
+      set((s) => ({
+        terminalOutput: [...s.terminalOutput, 'No more hints available.', ''],
+      }));
+      return;
+    }
+    const hint = currentLesson.hints[hintIndex];
+    const prefix = hint.exact ? 'Hint: ' : 'Hint: ';
+    const formatted = hint.exact ? `${prefix}\`${hint.text}\`` : `${prefix}${hint.text}`;
+    set((s) => ({
+      hintIndex: s.hintIndex + 1,
+      terminalOutput: [...s.terminalOutput, formatted, ''],
+    }));
   },
 
   submitPrediction: (choiceIndex: number) => {
@@ -960,11 +989,48 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
       }
     }
 
+    // Check ConfigMap/Secret dependencies for Pending pods
+    if (pod.status.phase === 'Pending' && pod.spec.envFrom && !pod.spec.failureMode) {
+      let missingRef: string | null = null;
+      for (const ref of pod.spec.envFrom) {
+        if (ref.configMapRef && !cluster.configMaps.find((c) => c.metadata.name === ref.configMapRef)) {
+          missingRef = `configmap "${ref.configMapRef}" not found`;
+          break;
+        }
+        if (ref.secretRef && !cluster.secrets.find((s) => s.metadata.name === ref.secretRef)) {
+          missingRef = `secret "${ref.secretRef}" not found`;
+          break;
+        }
+      }
+      if (missingRef) {
+        if (pod.status.reason !== 'CreateContainerConfigError') {
+          pod.status.reason = 'CreateContainerConfigError';
+          pod.status.message = missingRef;
+          if (!pod.spec.logs) pod.spec.logs = [];
+          pod.spec.logs.push(`[error] ${missingRef}`);
+          events.push({
+            timestamp: Date.now(), tick: currentTick, type: 'Warning', reason: 'Failed',
+            objectKind: 'Pod', objectName: pod.metadata.name,
+            message: `CreateContainerConfigError: ${missingRef}`,
+          });
+        }
+        continue;
+      } else if (pod.status.reason === 'CreateContainerConfigError') {
+        // Dependency now exists, clear the error
+        pod.status.reason = undefined;
+        pod.status.message = undefined;
+        if (!pod.spec.logs) pod.spec.logs = [];
+        pod.spec.logs.push('[info] Dependencies resolved, starting container');
+      }
+    }
+
     // Handle failure modes
     if (pod.spec.failureMode === 'ImagePullError') {
       if (pod.status.phase === 'Pending') {
         pod.status.reason = 'ImagePullError';
         pod.status.message = `Failed to pull image "${pod.spec.image}": image not found`;
+        if (!pod.spec.logs) pod.spec.logs = [];
+        pod.spec.logs.push(`[error] Failed to pull image "${pod.spec.image}": not found in registry`);
         events.push({
           timestamp: Date.now(),
           tick: currentTick,
@@ -979,31 +1045,28 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
     }
 
     if (pod.spec.failureMode === 'CrashLoopBackOff') {
+      if (!pod.spec.logs) pod.spec.logs = [];
       if (pod.status.phase === 'Pending' && pod.status.tickCreated !== undefined && currentTick > pod.status.tickCreated) {
-        // First transition: Pending → Running (briefly)
         pod.status.phase = 'Running';
         pod.status.reason = undefined;
+        pod.spec.logs.push(`[startup] Container started with image ${pod.spec.image}`);
         continue;
       }
       if (pod.status.phase === 'Running') {
-        // Crash: Running → CrashLoopBackOff
         pod.status.phase = 'CrashLoopBackOff';
         pod.status.reason = 'CrashLoopBackOff';
         pod.status.message = 'Back-off restarting failed container';
         pod.status.restartCount = (pod.status.restartCount || 0) + 1;
+        pod.spec.logs.push(`[fatal] Process exited with code 1`);
+        pod.spec.logs.push(`[error] Back-off restarting failed container`);
         events.push({
-          timestamp: Date.now(),
-          tick: currentTick,
-          type: 'Warning',
-          reason: 'BackOff',
-          objectKind: 'Pod',
-          objectName: pod.metadata.name,
+          timestamp: Date.now(), tick: currentTick, type: 'Warning', reason: 'BackOff',
+          objectKind: 'Pod', objectName: pod.metadata.name,
           message: `Back-off restarting failed container (restart count: ${pod.status.restartCount})`,
         });
         continue;
       }
       if (pod.status.phase === 'CrashLoopBackOff') {
-        // Restart attempt: CrashLoopBackOff → Running (then will crash again)
         pod.status.phase = 'Running';
         pod.status.reason = undefined;
         continue;
@@ -1011,9 +1074,11 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
     }
 
     if (pod.spec.failureMode === 'OOMKilled') {
+      if (!pod.spec.logs) pod.spec.logs = [];
       if (pod.status.phase === 'Pending' && pod.status.tickCreated !== undefined && currentTick > pod.status.tickCreated) {
         pod.status.phase = 'Running';
         pod.status.reason = undefined;
+        pod.spec.logs.push(`[startup] Container started with image ${pod.spec.image}`);
         continue;
       }
       if (pod.status.phase === 'Running') {
@@ -1021,13 +1086,10 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
         pod.status.reason = 'OOMKilled';
         pod.status.message = 'Container exceeded memory limit';
         pod.status.restartCount = (pod.status.restartCount || 0) + 1;
+        pod.spec.logs.push(`[fatal] Container killed: OOMKilled — memory limit exceeded`);
         events.push({
-          timestamp: Date.now(),
-          tick: currentTick,
-          type: 'Warning',
-          reason: 'OOMKilled',
-          objectKind: 'Pod',
-          objectName: pod.metadata.name,
+          timestamp: Date.now(), tick: currentTick, type: 'Warning', reason: 'OOMKilled',
+          objectKind: 'Pod', objectName: pod.metadata.name,
           message: `OOMKilled - container exceeded memory limit`,
         });
         pod.metadata.deletionTimestamp = Date.now();
@@ -1040,13 +1102,11 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
       const age = currentTick - (pod.status.tickCreated || 0);
       if (age >= pod.spec.completionTicks) {
         pod.status.phase = 'Succeeded';
+        if (!pod.spec.logs) pod.spec.logs = [];
+        pod.spec.logs.push(`[info] Task completed successfully, exit code 0`);
         events.push({
-          timestamp: Date.now(),
-          tick: currentTick,
-          type: 'Normal',
-          reason: 'Completed',
-          objectKind: 'Pod',
-          objectName: pod.metadata.name,
+          timestamp: Date.now(), tick: currentTick, type: 'Normal', reason: 'Completed',
+          objectKind: 'Pod', objectName: pod.metadata.name,
           message: `Pod completed successfully`,
         });
         continue;
@@ -1061,6 +1121,9 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
           continue; // Scheduler hasn't assigned it yet
         }
         pod.status.phase = 'Running';
+        if (!pod.spec.logs) pod.spec.logs = [];
+        pod.spec.logs.push(`[startup] Container started with image ${pod.spec.image}`);
+        pod.spec.logs.push(`[info] Listening on port 8080`);
 
         // Set readiness based on readiness probe
         if (pod.spec.readinessProbe) {
@@ -1072,12 +1135,8 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
         }
 
         events.push({
-          timestamp: Date.now(),
-          tick: currentTick,
-          type: 'Normal',
-          reason: 'Started',
-          objectKind: 'Pod',
-          objectName: pod.metadata.name,
+          timestamp: Date.now(), tick: currentTick, type: 'Normal', reason: 'Started',
+          objectKind: 'Pod', objectName: pod.metadata.name,
           message: `Started container with image "${pod.spec.image}"`,
         });
       }
@@ -1088,6 +1147,18 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
       const delay = pod.spec.readinessProbe.initialDelaySeconds || 0;
       const age = currentTick - (pod.status.tickCreated || 0);
       pod.status.ready = age > delay;
+    }
+
+    // Generate periodic running logs for long-lived pods
+    if (pod.status.phase === 'Running' && !pod.spec.completionTicks) {
+      if (!pod.spec.logs) pod.spec.logs = [];
+      if (currentTick % 3 === 0) {
+        pod.spec.logs.push(`[info] Serving requests on :8080`);
+      }
+      // Cap log lines to avoid memory bloat
+      if (pod.spec.logs.length > 50) {
+        pod.spec.logs = pod.spec.logs.slice(-50);
+      }
     }
 
     // Handle Failed pods (from node eviction) - RS controller will recreate

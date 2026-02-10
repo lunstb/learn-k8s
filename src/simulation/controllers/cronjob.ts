@@ -9,11 +9,28 @@ interface ReconcileResult {
 }
 
 function parseScheduleInterval(schedule: string): number {
-  // Format: "every-N-ticks"
-  const match = schedule.match(/^every-(\d+)-ticks?$/);
-  if (match) {
-    return parseInt(match[1], 10);
+  // Legacy format: "every-N-ticks"
+  const legacyMatch = schedule.match(/^every-(\d+)-ticks?$/);
+  if (legacyMatch) {
+    return parseInt(legacyMatch[1], 10);
   }
+
+  // Real cron syntax: parse the minute field
+  // Supports: */N (every N ticks), N (at tick N), * (every tick)
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length >= 1) {
+    const minuteField = parts[0];
+    if (minuteField === '*') return 1;
+    const cronMatch = minuteField.match(/^\*\/(\d+)$/);
+    if (cronMatch) {
+      return parseInt(cronMatch[1], 10);
+    }
+    // Single number — treat as interval
+    if (/^\d+$/.test(minuteField)) {
+      return parseInt(minuteField, 10) || 5;
+    }
+  }
+
   // Default fallback: every 5 ticks
   return 5;
 }

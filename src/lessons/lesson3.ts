@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson3: Lesson = {
@@ -8,15 +9,34 @@ export const lesson3: Lesson = {
     'Learn how ReplicaSets maintain a desired pod count and how scaling works declaratively.',
   mode: 'full',
   goalDescription:
-    'Scale the Deployment to 5 replicas, then back to 2.',
+    'Scale the "my-app" Deployment to 5 replicas, then back down to 2 replicas.',
   successMessage:
     'Scaling is declarative — the controller creates or removes only the diff. ' +
     'From 2\u21925 it created 3. From 5\u21922 it removed 3.',
   hints: [
-    'Use: kubectl scale deployment my-app --replicas=5',
-    'Then Reconcile to see 3 new pods created.',
-    'Then: kubectl scale deployment my-app --replicas=2',
-    'Reconcile to see 3 pods terminated.',
+    { text: 'Use kubectl scale to change the replica count of a deployment.' },
+    { text: 'kubectl scale deployment my-app --replicas=5', exact: true },
+    { text: 'After seeing 5 pods Running, scale back down.' },
+    { text: 'kubectl scale deployment my-app --replicas=2', exact: true },
+  ],
+  goals: [
+    {
+      description: 'Scale "my-app" up to 5 replicas',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+        return !!dep && dep.spec.replicas >= 5 || s.pods.filter(p => p.metadata.labels['app'] === 'my-app' && !p.metadata.deletionTimestamp).length >= 5;
+      },
+    },
+    {
+      description: 'Scale "my-app" back down to 2 replicas',
+      check: (s: ClusterState) => {
+        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+        if (!dep || dep.spec.replicas !== 2) return false;
+        const rs = s.replicaSets.find(r => r.metadata.ownerReference?.uid === dep.metadata.uid && !r.metadata.deletionTimestamp);
+        if (!rs) return false;
+        return s.pods.filter(p => p.metadata.ownerReference?.uid === rs.metadata.uid && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length === 2;
+      },
+    },
   ],
   lecture: {
     sections: [

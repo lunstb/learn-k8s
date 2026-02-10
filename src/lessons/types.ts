@@ -28,6 +28,16 @@ export interface QuizQuestion {
   explanation: string;
 }
 
+export interface LessonGoal {
+  description: string;
+  check: (state: ClusterState) => boolean;
+}
+
+export interface LessonHint {
+  text: string;
+  exact?: boolean;
+}
+
 export interface Lesson {
   id: number;
   title: string;
@@ -35,7 +45,8 @@ export interface Lesson {
   mode: 'full' | 'lecture-quiz';
   goalDescription: string;
   successMessage: string;
-  hints?: string[];
+  hints?: LessonHint[];
+  goals?: LessonGoal[];
   initialState?: () => Partial<Omit<ClusterState, 'tick'>> & Pick<ClusterState, 'pods' | 'replicaSets' | 'deployments' | 'nodes' | 'services' | 'events'>;
   goalCheck?: (state: ClusterState) => boolean;
   podFailureRules?: Record<string, 'ImagePullError' | 'CrashLoopBackOff' | 'OOMKilled'>;

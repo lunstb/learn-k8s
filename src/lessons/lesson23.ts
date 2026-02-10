@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lesson23: Lesson = {
@@ -8,17 +9,50 @@ export const lesson23: Lesson = {
     'Diagnose and fix a complex multi-service application with broken deployments, misconfigured services, a failing StatefulSet, and a downed node.',
   mode: 'full',
   goalDescription:
-    'Fix all issues: all deployments healthy, all services have endpoints, all nodes Ready.',
+    'Fix all issues: the backend has an image typo ("backnd:1.0" should be "backend:1.0"), the backend-svc has the wrong selector (app=back-end should be app=backend), and node-3 is cordoned. All deployments healthy, all services with endpoints, all nodes Ready.',
   successMessage:
     'Congratulations! You diagnosed and fixed a complex multi-service architecture: image typo on backend, ' +
     'wrong selector on backend-svc, and a NotReady node. These are the exact issues you will encounter in production.',
   hints: [
-    'Start with: kubectl get pods — identify which pods are not Running.',
-    'Check events: kubectl get events — look for ImagePullError warnings.',
-    'The backend deployment has an image typo: "backnd:1.0" instead of "backend:1.0". Fix with: kubectl set image deployment/backend backend:1.0',
-    'The backend-svc has the wrong selector: app=back-end instead of app=backend. Fix with: kubectl patch service backend-svc --selector=app=backend',
-    'One node is NotReady: kubectl uncordon node-3',
-    'Reconcile multiple times until all pods are Running and services have endpoints.',
+    { text: 'Start with kubectl get pods to identify which pods are failing.' },
+    { text: 'Use kubectl get events to check for ImagePullError messages.' },
+    { text: 'The backend image has a typo: "backnd:1.0" instead of "backend:1.0".' },
+    { text: 'kubectl set image deployment/backend backend:1.0', exact: true },
+    { text: 'The backend-svc selector doesn\'t match — compare with actual pod labels.' },
+    { text: 'kubectl patch service backend-svc --selector=app=backend', exact: true },
+    { text: 'kubectl uncordon node-3', exact: true },
+  ],
+  goals: [
+    {
+      description: 'Fix the backend image typo ("backnd:1.0" \u2192 "backend:1.0")',
+      check: (s: ClusterState) => {
+        const backend = s.deployments.find(d => d.metadata.name === 'backend');
+        return !!backend && backend.spec.template.spec.image !== 'backnd:1.0';
+      },
+    },
+    {
+      description: 'Fix backend-svc selector (app=back-end \u2192 app=backend)',
+      check: (s: ClusterState) => {
+        const svc = s.services.find(svc => svc.spec.selector['app'] === 'backend');
+        return !!svc && svc.status.endpoints.length > 0;
+      },
+    },
+    {
+      description: 'Uncordon node-3',
+      check: (s: ClusterState) => s.nodes.every(n => n.status.conditions[0].status === 'True'),
+    },
+    {
+      description: 'All deployments healthy with Running pods',
+      check: (s: ClusterState) => {
+        return s.deployments.every(d => (d.status.readyReplicas || 0) >= d.spec.replicas);
+      },
+    },
+    {
+      description: 'All services have endpoints',
+      check: (s: ClusterState) => {
+        return s.services.every(svc => svc.status.endpoints.length > 0);
+      },
+    },
   ],
   lecture: {
     sections: [

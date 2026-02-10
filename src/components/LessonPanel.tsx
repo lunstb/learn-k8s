@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSimulatorStore } from '../simulation/store';
 import type { LessonPhase } from '../simulation/store';
 import { curriculum } from '../lessons';
 import type { CurriculumSection } from '../lessons';
+import type { LessonGoal } from '../lessons/types';
 
 const fullPhases: { key: LessonPhase; label: string }[] = [
   { key: 'lecture', label: 'Learn' },
@@ -22,6 +23,9 @@ export function LessonPanel() {
   const completedLessonIds = useSimulatorStore((s) => s.completedLessonIds);
   const loadLesson = useSimulatorStore((s) => s.loadLesson);
   const goToPhase = useSimulatorStore((s) => s.goToPhase);
+  const cluster = useSimulatorStore((s) => s.cluster);
+  const hintIndex = useSimulatorStore((s) => s.hintIndex);
+  const revealNextHint = useSimulatorStore((s) => s.revealNextHint);
 
   // Track which sections are expanded
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
@@ -83,7 +87,7 @@ export function LessonPanel() {
               else if (thisIndex === phaseIndex) dotClass += ' active';
               if (isLessonCompleted && thisIndex !== phaseIndex) dotClass += ' done';
 
-              const canClick = isLessonCompleted || thisIndex <= phaseIndex;
+              const canClick = true;
               const isActive = thisIndex === phaseIndex;
 
               return (
@@ -108,9 +112,13 @@ export function LessonPanel() {
           <p className="lesson-description">{currentLesson.description}</p>
 
           {lessonPhase === 'practice' && (
-            <div className="lesson-goal">
-              <strong>Goal:</strong> {currentLesson.goalDescription}
-            </div>
+            <GoalsChecklist
+              lesson={currentLesson}
+              cluster={cluster}
+              hintIndex={hintIndex}
+              onRevealHint={revealNextHint}
+              lessonCompleted={lessonCompleted}
+            />
           )}
           {completedLessonIds.includes(currentLesson.id) && lessonPhase !== 'practice' && (
             <div className="lesson-success lesson-success-compact">
@@ -131,6 +139,65 @@ export function LessonPanel() {
             Select a lesson to get started.
           </p>
         </div>
+      )}
+    </div>
+  );
+}
+
+function GoalsChecklist({
+  lesson,
+  cluster,
+  hintIndex,
+  onRevealHint,
+  lessonCompleted,
+}: {
+  lesson: NonNullable<ReturnType<typeof useSimulatorStore.getState>['currentLesson']>;
+  cluster: ReturnType<typeof useSimulatorStore.getState>['cluster'];
+  hintIndex: number;
+  onRevealHint: () => void;
+  lessonCompleted: boolean;
+}) {
+  // Build goals list: use lesson.goals if defined, else fall back to goalDescription + goalCheck
+  const goals: LessonGoal[] = useMemo(() => {
+    if (lesson.goals && lesson.goals.length > 0) return lesson.goals;
+    if (lesson.goalCheck) {
+      return [{ description: lesson.goalDescription, check: lesson.goalCheck }];
+    }
+    return [{ description: lesson.goalDescription, check: () => false }];
+  }, [lesson]);
+
+  const completedCount = goals.filter((g) => g.check(cluster)).length;
+  const totalCount = goals.length;
+  const totalHints = lesson.hints?.length ?? 0;
+  const allHintsRevealed = hintIndex >= totalHints;
+
+  return (
+    <div className="goals-checklist">
+      <div className="goals-header">
+        <span className="goals-title">Goals</span>
+        <span className="goals-progress">{completedCount}/{totalCount}</span>
+      </div>
+      <div className="goals-list">
+        {goals.map((goal, i) => {
+          const done = goal.check(cluster);
+          return (
+            <div key={i} className={`goal-item ${done ? 'completed' : ''}`}>
+              <span className="goal-icon">{done ? '\u2705' : '\u25CB'}</span>
+              <span className="goal-text">{goal.description}</span>
+            </div>
+          );
+        })}
+      </div>
+      {totalHints > 0 && !lessonCompleted && (
+        <button
+          className={`hint-btn ${allHintsRevealed ? 'exhausted' : ''}`}
+          onClick={onRevealHint}
+          disabled={allHintsRevealed}
+        >
+          {allHintsRevealed
+            ? `All hints revealed (${totalHints}/${totalHints})`
+            : `Show Hint (${hintIndex}/${totalHints} revealed)`}
+        </button>
       )}
     </div>
   );

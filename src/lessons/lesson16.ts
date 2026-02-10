@@ -1,4 +1,5 @@
 import type { Lesson } from './types';
+import type { ClusterState } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
 export const lesson16: Lesson = {
@@ -8,15 +9,27 @@ export const lesson16: Lesson = {
     'Learn how StatefulSets manage stateful applications with stable network identities, ordered deployment, and persistent storage.',
   mode: 'full',
   goalDescription:
-    'Create a StatefulSet "mysql" with 3 replicas and verify all 3 pods are running with ordinal names (mysql-0, mysql-1, mysql-2).',
+    'Create a StatefulSet named "mysql" with image mysql:8.0 and 3 replicas. Reconcile until all 3 pods (mysql-0, mysql-1, mysql-2) are Running.',
   successMessage:
     'All 3 StatefulSet pods are running with stable ordinal names. Unlike Deployments, StatefulSets give each pod ' +
     'a predictable identity that survives restarts — essential for databases and clustered applications.',
   hints: [
-    'Create a StatefulSet: kubectl create statefulset mysql --image=mysql:8.0 --replicas=3',
-    'Click "Reconcile" to create pods. StatefulSet pods are created in order: mysql-0, then mysql-1, then mysql-2.',
-    'Reconcile a few more times until all 3 pods reach Running status.',
-    'Check progress: kubectl get pods',
+    { text: 'The syntax is: kubectl create statefulset <name> --image=<image> --replicas=<count>. Pods are created one at a time, so reconcile multiple times.' },
+    { text: 'kubectl create statefulset mysql --image=mysql:8.0 --replicas=3', exact: true },
+    { text: 'Reconcile multiple times — StatefulSet creates pods sequentially, not all at once.' },
+  ],
+  goals: [
+    {
+      description: 'Create a StatefulSet named "mysql" with 3 replicas',
+      check: (s: ClusterState) => !!s.statefulSets.find(sts => sts.metadata.name === 'mysql'),
+    },
+    {
+      description: 'All 3 pods Running (mysql-0, mysql-1, mysql-2)',
+      check: (s: ClusterState) => {
+        const running = s.pods.filter(p => p.metadata.name.startsWith('mysql-') && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+        return running.length >= 3;
+      },
+    },
   ],
   lecture: {
     sections: [

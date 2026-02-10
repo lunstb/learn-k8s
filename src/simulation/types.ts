@@ -40,6 +40,8 @@ export interface PodSpec {
   env?: { name: string; value?: string; valueFrom?: { configMapKeyRef?: { name: string; key: string }; secretKeyRef?: { name: string; key: string } } }[];
   completionTicks?: number;
   restartPolicy?: 'Always' | 'OnFailure' | 'Never';
+  logs?: string[];
+  tolerations?: { key: string; operator?: 'Equal' | 'Exists'; value?: string; effect?: string }[];
 }
 
 export type PodPhase = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Terminating' | 'CrashLoopBackOff';
@@ -133,7 +135,11 @@ export interface SimEvent {
 export interface SimNode {
   kind: 'Node';
   metadata: ObjectMeta;
-  spec: { capacity: { pods: number } };
+  spec: {
+    capacity: { pods: number };
+    taints?: { key: string; value?: string; effect: 'NoSchedule' | 'PreferNoSchedule' | 'NoExecute' }[];
+    unschedulable?: boolean;
+  };
   status: {
     conditions: [{ type: 'Ready'; status: 'True' | 'False' }];
     allocatedPods: number;
