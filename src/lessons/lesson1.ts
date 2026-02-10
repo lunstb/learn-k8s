@@ -6,6 +6,7 @@ export const lesson1: Lesson = {
   title: 'Why Kubernetes?',
   description:
     'Discover why container orchestration exists and learn the core pattern that drives all of Kubernetes.',
+  mode: 'full',
   goalDescription: 'Get all 3 pods Running by using the Reconcile button.',
   successMessage:
     'The RS controller brought the cluster to desired state. You declared 3 pods, the controller made it happen. ' +
@@ -88,56 +89,66 @@ export const lesson1: Lesson = {
   },
   quiz: [
     {
-      question: 'What is the main advantage of a declarative system over an imperative one?',
+      question:
+        'A ReplicaSet is configured with replicas=3 and all 3 pods are Running. One pod crashes at 3 AM. What happens next?',
       choices: [
-        'You have more control over individual steps',
-        'The system self-heals by continuously reconciling toward desired state',
-        'It\'s faster to execute',
-        'It uses less memory',
-      ],
-      correctIndex: 1,
-      explanation:
-        'Declarative systems automatically correct drift. If something crashes, the controller notices ' +
-        'the gap between desired and actual state and fixes it — without you writing recovery logic.',
-    },
-    {
-      question: 'In the Kubernetes control loop, what happens when current state doesn\'t match desired state?',
-      choices: [
-        'An error is thrown',
-        'The desired state is updated to match current state',
-        'A controller takes action to reconcile',
-        'The cluster shuts down',
+        'Kubernetes restarts the crashed pod on the same node with the same IP address',
+        'The ReplicaSet waits for an administrator to acknowledge the failure before acting',
+        'The control loop detects 2 Running vs 3 desired and creates a brand-new replacement pod',
+        'The desired state is automatically reduced to 2 to match the current state',
       ],
       correctIndex: 2,
       explanation:
-        'Controllers reconcile. If desired is 3 pods and current is 1, the controller creates 2 more. ' +
-        'This loop runs continuously.',
+        'The ReplicaSet controller does not restart the old pod — it creates an entirely new pod. The crashed pod is gone forever. ' +
+        'This is a key distinction: Kubernetes replaces, it does not repair. The new pod gets a new name, new IP, ' +
+        'and may land on a different node. The control loop runs continuously, so this happens in seconds without human intervention.',
     },
     {
-      question: 'What is a Pod in Kubernetes?',
+      question:
+        'Your team writes a shell script that checks pod count every 30 seconds and creates replacements if any are missing. ' +
+        'How does the Kubernetes declarative approach differ from this?',
       choices: [
-        'A virtual machine',
-        'The smallest deployable unit that wraps one or more containers',
-        'A networking rule',
-        'A storage volume',
+        'Kubernetes does the same thing but checks more frequently',
+        'The script is imperative — it encodes HOW to recover; Kubernetes is declarative — you specify WHAT state you want and controllers continuously reconcile toward it',
+        'Kubernetes only checks pod count on a schedule, just like the script',
+        'There is no practical difference — both achieve the same reliability guarantees',
       ],
       correctIndex: 1,
       explanation:
-        'A Pod is the atomic unit of deployment. It wraps one or more containers that share networking ' +
-        'and storage. Most pods run a single container.',
+        'The script is fragile: it can crash, it handles only the scenarios you coded, and it requires you to write recovery logic for every edge case. ' +
+        'Kubernetes controllers are built into the system, always running, and handle any deviation from desired state — not just the scenarios you anticipated. ' +
+        'Declarative also means the desired state is stored and versioned, so the system survives restarts and can be audited.',
     },
     {
-      question: 'What does a ReplicaSet do?',
+      question:
+        'You have a ReplicaSet with replicas=3. Currently there are 5 pods matching its selector (someone manually created 2 extra). What does the controller do?',
       choices: [
-        'Routes network traffic to pods',
-        'Stores configuration data',
-        'Ensures a specified number of pod replicas are running',
-        'Manages cluster nodes',
+        'It ignores the extra pods since it did not create them',
+        'It creates 3 more pods for a total of 8, since replicas=3 means "add 3"',
+        'It deletes 2 pods to bring the count down to the desired 3',
+        'It crashes because the state is inconsistent',
       ],
       correctIndex: 2,
       explanation:
-        'A ReplicaSet watches pods and ensures the actual count matches the desired count. ' +
-        'If pods are missing, it creates them. If there are too many, it deletes the extras.',
+        'The ReplicaSet controller reconciles in both directions. It does not just create missing pods — it also removes excess ones. ' +
+        'The controller counts all pods matching its selector, regardless of who created them. If actual (5) > desired (3), it terminates the surplus. ' +
+        'This is why you should never manually create pods with labels that match an existing controller\'s selector.',
+    },
+    {
+      question:
+        'A pod is stuck in Pending phase for 10 minutes. Which of these is a plausible explanation?',
+      choices: [
+        'The container image is crashing on startup',
+        'Pending pods automatically terminate after 5 minutes, so this scenario is impossible',
+        'The pod\'s ReplicaSet has been deleted',
+        'No node in the cluster has sufficient available capacity to schedule the pod',
+      ],
+      correctIndex: 3,
+      explanation:
+        'Pending means the pod has been accepted by the API server but has not been assigned to a node yet. The most common cause is insufficient cluster resources. ' +
+        'A crashing container would show as CrashLoopBackOff within a Running pod (the pod is scheduled, but its container keeps failing). ' +
+        'If the ReplicaSet were deleted, the pod would still exist — standalone pods are not automatically removed when their parent disappears ' +
+        '(unless garbage collection cascade deletes them).',
     },
   ],
   initialState: () => {

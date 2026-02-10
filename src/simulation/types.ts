@@ -2,6 +2,8 @@ export interface ObjectMeta {
   name: string;
   uid: string;
   labels: Record<string, string>;
+  annotations?: Record<string, string>;
+  namespace?: string;
   ownerReference?: {
     kind: string;
     name: string;
@@ -11,10 +13,33 @@ export interface ObjectMeta {
   creationTimestamp: number;
 }
 
+export interface ResourceRequirements {
+  requests?: { cpu?: string; memory?: string };
+  limits?: { cpu?: string; memory?: string };
+}
+
+export interface Probe {
+  type: 'httpGet' | 'exec' | 'tcpSocket';
+  path?: string;
+  port?: number;
+  command?: string[];
+  initialDelaySeconds?: number;
+  periodSeconds?: number;
+  failureThreshold?: number;
+}
+
 export interface PodSpec {
   image: string;
   nodeName?: string;
-  failureMode?: 'ImagePullError' | 'CrashLoopBackOff' | null;
+  failureMode?: 'ImagePullError' | 'CrashLoopBackOff' | 'OOMKilled' | null;
+  namespace?: string;
+  resources?: ResourceRequirements;
+  livenessProbe?: Probe;
+  readinessProbe?: Probe;
+  envFrom?: { configMapRef?: string; secretRef?: string }[];
+  env?: { name: string; value?: string; valueFrom?: { configMapKeyRef?: { name: string; key: string }; secretKeyRef?: { name: string; key: string } } }[];
+  completionTicks?: number;
+  restartPolicy?: 'Always' | 'OnFailure' | 'Never';
 }
 
 export type PodPhase = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Terminating' | 'CrashLoopBackOff';
@@ -25,6 +50,8 @@ export interface PodStatus {
   reason?: string;
   message?: string;
   restartCount?: number;
+  ready?: boolean;
+  cpuUsage?: number;
 }
 
 export interface Pod {
@@ -118,11 +145,146 @@ export interface SimNode {
 export interface Service {
   kind: 'Service';
   metadata: ObjectMeta;
-  spec: { selector: Record<string, string>; port: number };
+  spec: { selector: Record<string, string>; port: number; type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer' };
   status: { endpoints: string[] };
 }
 
-export type KubeObject = Pod | ReplicaSet | Deployment | SimNode | Service;
+// --- Namespaces ---
+
+export interface Namespace {
+  kind: 'Namespace';
+  metadata: ObjectMeta;
+  status: { phase: 'Active' | 'Terminating' };
+}
+
+// --- ConfigMaps ---
+
+export interface ConfigMap {
+  kind: 'ConfigMap';
+  metadata: ObjectMeta;
+  data: Record<string, string>;
+}
+
+// --- Secrets ---
+
+export interface Secret {
+  kind: 'Secret';
+  metadata: ObjectMeta;
+  type: string;
+  data: Record<string, string>;
+}
+
+// --- Ingress ---
+
+export interface IngressRule {
+  host: string;
+  path: string;
+  serviceName: string;
+  servicePort: number;
+}
+
+export interface Ingress {
+  kind: 'Ingress';
+  metadata: ObjectMeta;
+  spec: { rules: IngressRule[] };
+  status: { loadBalancer?: { ip: string } };
+}
+
+// --- StatefulSets ---
+
+export interface StatefulSetSpec {
+  replicas: number;
+  selector: Record<string, string>;
+  serviceName: string;
+  template: {
+    labels: Record<string, string>;
+    spec: PodSpec;
+  };
+}
+
+export interface StatefulSet {
+  kind: 'StatefulSet';
+  metadata: ObjectMeta;
+  spec: StatefulSetSpec;
+  status: { replicas: number; readyReplicas: number; currentReplicas: number };
+}
+
+// --- DaemonSets ---
+
+export interface DaemonSetSpec {
+  selector: Record<string, string>;
+  template: {
+    labels: Record<string, string>;
+    spec: PodSpec;
+  };
+}
+
+export interface DaemonSet {
+  kind: 'DaemonSet';
+  metadata: ObjectMeta;
+  spec: DaemonSetSpec;
+  status: { desiredNumberScheduled: number; currentNumberScheduled: number; numberReady: number };
+}
+
+// --- Jobs ---
+
+export interface JobSpec {
+  completions: number;
+  parallelism: number;
+  backoffLimit: number;
+  template: {
+    labels: Record<string, string>;
+    spec: PodSpec;
+  };
+}
+
+export interface Job {
+  kind: 'Job';
+  metadata: ObjectMeta;
+  spec: JobSpec;
+  status: { succeeded: number; failed: number; active: number; startTime?: number; completionTime?: number };
+}
+
+// --- CronJobs ---
+
+export interface CronJobSpec {
+  schedule: string;
+  jobTemplate: {
+    spec: JobSpec;
+  };
+}
+
+export interface CronJob {
+  kind: 'CronJob';
+  metadata: ObjectMeta;
+  spec: CronJobSpec;
+  status: { lastScheduleTime?: number; active: number };
+}
+
+// --- HPA ---
+
+export interface HorizontalPodAutoscaler {
+  kind: 'HorizontalPodAutoscaler';
+  metadata: ObjectMeta;
+  spec: {
+    scaleTargetRef: { kind: string; name: string };
+    minReplicas: number;
+    maxReplicas: number;
+    targetCPUUtilizationPercentage: number;
+  };
+  status: { currentReplicas: number; desiredReplicas: number; currentCPUUtilizationPercentage?: number };
+}
+
+// --- Helm ---
+
+export interface HelmRelease {
+  name: string;
+  chart: string;
+  status: 'deployed' | 'uninstalled';
+  deploymentName: string;
+}
+
+export type KubeObject = Pod | ReplicaSet | Deployment | SimNode | Service | Namespace | ConfigMap | Secret | Ingress | StatefulSet | DaemonSet | Job | CronJob | HorizontalPodAutoscaler;
 
 export interface ClusterState {
   pods: Pod[];
@@ -131,6 +293,16 @@ export interface ClusterState {
   nodes: SimNode[];
   services: Service[];
   events: SimEvent[];
+  namespaces: Namespace[];
+  configMaps: ConfigMap[];
+  secrets: Secret[];
+  ingresses: Ingress[];
+  statefulSets: StatefulSet[];
+  daemonSets: DaemonSet[];
+  jobs: Job[];
+  cronJobs: CronJob[];
+  hpas: HorizontalPodAutoscaler[];
+  helmReleases: HelmRelease[];
   tick: number;
 }
 

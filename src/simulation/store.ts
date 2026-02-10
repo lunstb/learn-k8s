@@ -8,12 +8,27 @@ import type {
   Service,
   SimEvent,
   ControllerAction,
+  Namespace,
+  ConfigMap,
+  Secret,
+  Ingress,
+  StatefulSet,
+  DaemonSet,
+  Job,
+  CronJob,
+  HorizontalPodAutoscaler,
+  HelmRelease,
 } from './types';
 import { reconcileReplicaSets } from './controllers/replicaset';
 import { reconcileDeployments } from './controllers/deployment';
 import { runScheduler } from './controllers/scheduler';
 import { runNodeLifecycle } from './controllers/nodelifecycle';
 import { reconcileEndpoints } from './controllers/endpoints';
+import { reconcileStatefulSets } from './controllers/statefulset';
+import { reconcileDaemonSets } from './controllers/daemonset';
+import { reconcileJobs } from './controllers/job';
+import { reconcileCronJobs } from './controllers/cronjob';
+import { reconcileHPAs } from './controllers/hpa';
 import type { Lesson } from '../lessons/types';
 
 export type LessonPhase = 'lecture' | 'quiz' | 'practice';
@@ -42,6 +57,11 @@ export interface SimulatorStore {
   predictionPending: boolean;
   predictionResult: 'correct' | 'incorrect' | null;
 
+  // UI state
+  selectedResource: { kind: string; uid: string } | null;
+  viewMode: 'logical' | 'infrastructure';
+  showNetworkOverlay: boolean;
+
   // Actions
   setCluster: (cluster: ClusterState) => void;
   addPod: (pod: Pod) => void;
@@ -60,8 +80,33 @@ export interface SimulatorStore {
   removeService: (uid: string) => void;
   addEvent: (event: SimEvent) => void;
 
+  // New resource CRUD
+  addNamespace: (ns: Namespace) => void;
+  removeNamespace: (uid: string) => void;
+  addConfigMap: (cm: ConfigMap) => void;
+  removeConfigMap: (uid: string) => void;
+  addSecret: (secret: Secret) => void;
+  removeSecret: (uid: string) => void;
+  addIngress: (ing: Ingress) => void;
+  removeIngress: (uid: string) => void;
+  addStatefulSet: (sts: StatefulSet) => void;
+  removeStatefulSet: (uid: string) => void;
+  updateStatefulSet: (uid: string, updates: Partial<StatefulSet>) => void;
+  addDaemonSet: (ds: DaemonSet) => void;
+  removeDaemonSet: (uid: string) => void;
+  updateDaemonSet: (uid: string, updates: Partial<DaemonSet>) => void;
+  addJob: (job: Job) => void;
+  removeJob: (uid: string) => void;
+  updateJob: (uid: string, updates: Partial<Job>) => void;
+  addCronJob: (cj: CronJob) => void;
+  removeCronJob: (uid: string) => void;
+  addHPA: (hpa: HorizontalPodAutoscaler) => void;
+  removeHPA: (uid: string) => void;
+  addHelmRelease: (release: HelmRelease) => void;
+  removeHelmRelease: (name: string) => void;
+
   // Simulation controls
-  tick: () => void;
+  tick: (auto?: boolean) => void;
   reset: () => void;
   toggleAutoRun: () => void;
   setAutoRunning: (running: boolean) => void;
@@ -74,6 +119,7 @@ export interface SimulatorStore {
   loadLesson: (lesson: Lesson) => void;
   checkGoal: () => void;
   setLessonCompleted: (completed: boolean) => void;
+  completeLectureQuiz: () => void;
 
   // Lesson phase actions
   startQuiz: () => void;
@@ -85,6 +131,11 @@ export interface SimulatorStore {
   // Predictions
   submitPrediction: (choiceIndex: number) => void;
   advanceStep: () => void;
+
+  // UI
+  setSelectedResource: (resource: { kind: string; uid: string } | null) => void;
+  setViewMode: (mode: 'logical' | 'infrastructure') => void;
+  toggleNetworkOverlay: () => void;
 }
 
 const STORAGE_KEY = 'k8s-sim-completed-lessons';
@@ -113,6 +164,16 @@ const initialClusterState: ClusterState = {
   nodes: [],
   services: [],
   events: [],
+  namespaces: [],
+  configMaps: [],
+  secrets: [],
+  ingresses: [],
+  statefulSets: [],
+  daemonSets: [],
+  jobs: [],
+  cronJobs: [],
+  hpas: [],
+  helmReleases: [],
   tick: 0,
 };
 
@@ -120,7 +181,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   cluster: { ...initialClusterState },
   actions: [],
   terminalOutput: ['Welcome to the Kubernetes Simulator!', 'Type "help" for available commands.', ''],
-  isAutoRunning: false,
+  isAutoRunning: true,
   autoRunInterval: 1500,
   currentLesson: null,
   lessonCompleted: false,
@@ -132,6 +193,9 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   currentStep: 0,
   predictionPending: false,
   predictionResult: null,
+  selectedResource: null,
+  viewMode: 'infrastructure',
+  showNetworkOverlay: false,
 
   setCluster: (cluster) => set({ cluster }),
 
@@ -267,7 +331,143 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       },
     })),
 
-  tick: () => {
+  // --- New resource CRUD ---
+
+  addNamespace: (ns) =>
+    set((state) => ({
+      cluster: { ...state.cluster, namespaces: [...state.cluster.namespaces, ns] },
+    })),
+
+  removeNamespace: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, namespaces: state.cluster.namespaces.filter((n) => n.metadata.uid !== uid) },
+    })),
+
+  addConfigMap: (cm) =>
+    set((state) => ({
+      cluster: { ...state.cluster, configMaps: [...state.cluster.configMaps, cm] },
+    })),
+
+  removeConfigMap: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, configMaps: state.cluster.configMaps.filter((c) => c.metadata.uid !== uid) },
+    })),
+
+  addSecret: (secret) =>
+    set((state) => ({
+      cluster: { ...state.cluster, secrets: [...state.cluster.secrets, secret] },
+    })),
+
+  removeSecret: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, secrets: state.cluster.secrets.filter((s) => s.metadata.uid !== uid) },
+    })),
+
+  addIngress: (ing) =>
+    set((state) => ({
+      cluster: { ...state.cluster, ingresses: [...state.cluster.ingresses, ing] },
+    })),
+
+  removeIngress: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, ingresses: state.cluster.ingresses.filter((i) => i.metadata.uid !== uid) },
+    })),
+
+  addStatefulSet: (sts) =>
+    set((state) => ({
+      cluster: { ...state.cluster, statefulSets: [...state.cluster.statefulSets, sts] },
+    })),
+
+  removeStatefulSet: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, statefulSets: state.cluster.statefulSets.filter((s) => s.metadata.uid !== uid) },
+    })),
+
+  updateStatefulSet: (uid, updates) =>
+    set((state) => ({
+      cluster: {
+        ...state.cluster,
+        statefulSets: state.cluster.statefulSets.map((s) =>
+          s.metadata.uid === uid ? { ...s, ...updates } : s
+        ),
+      },
+    })),
+
+  addDaemonSet: (ds) =>
+    set((state) => ({
+      cluster: { ...state.cluster, daemonSets: [...state.cluster.daemonSets, ds] },
+    })),
+
+  removeDaemonSet: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, daemonSets: state.cluster.daemonSets.filter((d) => d.metadata.uid !== uid) },
+    })),
+
+  updateDaemonSet: (uid, updates) =>
+    set((state) => ({
+      cluster: {
+        ...state.cluster,
+        daemonSets: state.cluster.daemonSets.map((d) =>
+          d.metadata.uid === uid ? { ...d, ...updates } : d
+        ),
+      },
+    })),
+
+  addJob: (job) =>
+    set((state) => ({
+      cluster: { ...state.cluster, jobs: [...state.cluster.jobs, job] },
+    })),
+
+  removeJob: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, jobs: state.cluster.jobs.filter((j) => j.metadata.uid !== uid) },
+    })),
+
+  updateJob: (uid, updates) =>
+    set((state) => ({
+      cluster: {
+        ...state.cluster,
+        jobs: state.cluster.jobs.map((j) =>
+          j.metadata.uid === uid ? { ...j, ...updates } : j
+        ),
+      },
+    })),
+
+  addCronJob: (cj) =>
+    set((state) => ({
+      cluster: { ...state.cluster, cronJobs: [...state.cluster.cronJobs, cj] },
+    })),
+
+  removeCronJob: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, cronJobs: state.cluster.cronJobs.filter((c) => c.metadata.uid !== uid) },
+    })),
+
+  addHPA: (hpa) =>
+    set((state) => ({
+      cluster: { ...state.cluster, hpas: [...state.cluster.hpas, hpa] },
+    })),
+
+  removeHPA: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, hpas: state.cluster.hpas.filter((h) => h.metadata.uid !== uid) },
+    })),
+
+  addHelmRelease: (release) =>
+    set((state) => ({
+      cluster: { ...state.cluster, helmReleases: [...state.cluster.helmReleases, release] },
+    })),
+
+  removeHelmRelease: (name) =>
+    set((state) => ({
+      cluster: { ...state.cluster, helmReleases: state.cluster.helmReleases.filter((r) => r.name !== name) },
+    })),
+
+  setSelectedResource: (resource) => set({ selectedResource: resource }),
+  setViewMode: (mode) => set({ viewMode: mode }),
+  toggleNetworkOverlay: () => set((s) => ({ showNetworkOverlay: !s.showNetworkOverlay })),
+
+  tick: (auto?: boolean) => {
     const state = get();
 
     // Block tick if prediction is pending
@@ -290,6 +490,16 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       nodes: state.cluster.nodes.map((n) => ({ ...n, status: { ...n.status, conditions: [...n.status.conditions] as [{ type: 'Ready'; status: 'True' | 'False' }] } })),
       services: state.cluster.services.map((s) => ({ ...s, status: { ...s.status, endpoints: [...s.status.endpoints] } })),
       events: [...state.cluster.events],
+      namespaces: [...state.cluster.namespaces],
+      configMaps: [...state.cluster.configMaps],
+      secrets: [...state.cluster.secrets],
+      ingresses: [...state.cluster.ingresses],
+      statefulSets: state.cluster.statefulSets.map((s) => ({ ...s })),
+      daemonSets: state.cluster.daemonSets.map((d) => ({ ...d })),
+      jobs: state.cluster.jobs.map((j) => ({ ...j })),
+      cronJobs: state.cluster.cronJobs.map((c) => ({ ...c })),
+      hpas: state.cluster.hpas.map((h) => ({ ...h })),
+      helmReleases: [...state.cluster.helmReleases],
     };
     const allActions: ControllerAction[] = [];
     const allEvents: SimEvent[] = [];
@@ -330,6 +540,41 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     cluster.pods = rsResult.pods;
     allActions.push(...rsResult.actions);
     allEvents.push(...rsResult.events);
+
+    // StatefulSet controller
+    const stsResult = reconcileStatefulSets(cluster);
+    cluster.pods = stsResult.pods;
+    cluster.statefulSets = stsResult.statefulSets;
+    allActions.push(...stsResult.actions);
+    allEvents.push(...stsResult.events);
+
+    // DaemonSet controller
+    const dsResult = reconcileDaemonSets(cluster);
+    cluster.pods = dsResult.pods;
+    cluster.daemonSets = dsResult.daemonSets;
+    allActions.push(...dsResult.actions);
+    allEvents.push(...dsResult.events);
+
+    // Job controller
+    const jobResult = reconcileJobs(cluster);
+    cluster.pods = jobResult.pods;
+    cluster.jobs = jobResult.jobs;
+    allActions.push(...jobResult.actions);
+    allEvents.push(...jobResult.events);
+
+    // CronJob controller
+    const cronResult = reconcileCronJobs(cluster);
+    cluster.jobs = cronResult.jobs;
+    cluster.cronJobs = cronResult.cronJobs;
+    allActions.push(...cronResult.actions);
+    allEvents.push(...cronResult.events);
+
+    // HPA controller
+    const hpaResult = reconcileHPAs(cluster);
+    cluster.deployments = hpaResult.deployments;
+    cluster.hpas = hpaResult.hpas;
+    allActions.push(...hpaResult.actions);
+    allEvents.push(...hpaResult.events);
 
     // Scheduler (assigns pods to nodes)
     const schedulerResult = runScheduler(cluster);
@@ -372,10 +617,12 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     // Accumulate events (cap at 50)
     cluster.events = [...cluster.events, ...allEvents].slice(-50);
 
-    // Build output
+    // Build output — suppress "no changes" noise during auto-run
     const outputLines: string[] = [];
     if (allActions.length === 0) {
-      outputLines.push(`[Tick ${cluster.tick}] No changes - cluster is at desired state.`);
+      if (!auto) {
+        outputLines.push(`[Tick ${cluster.tick}] No changes - cluster is at desired state.`);
+      }
     } else {
       outputLines.push(`[Tick ${cluster.tick}] Controllers reconciled:`);
       for (const action of allActions) {
@@ -386,7 +633,9 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     set((s) => ({
       cluster,
       actions: allActions,
-      terminalOutput: [...s.terminalOutput, ...outputLines, ''],
+      terminalOutput: outputLines.length > 0
+        ? [...s.terminalOutput, ...outputLines, '']
+        : s.terminalOutput,
     }));
 
     // Check afterTick step triggers
@@ -467,7 +716,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       quizRevealed: false,
       actions: [],
       terminalOutput: ['Welcome to the Kubernetes Simulator!', 'Type "help" for available commands.', ''],
-      isAutoRunning: false,
+      isAutoRunning: true,
       currentStep: 0,
       predictionPending: false,
       predictionResult: null,
@@ -477,6 +726,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   checkGoal: () => {
     const { currentLesson, cluster, lessonCompleted, currentStep } = get();
     if (!currentLesson || lessonCompleted) return;
+    if (!currentLesson.goalCheck) return;
 
     // Check step-level goalCheck
     if (currentLesson.steps) {
@@ -507,6 +757,20 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   },
 
   setLessonCompleted: (completed) => set({ lessonCompleted: completed }),
+
+  completeLectureQuiz: () => {
+    const { currentLesson, completedLessonIds } = get();
+    if (!currentLesson) return;
+
+    const newCompleted = completedLessonIds.includes(currentLesson.id)
+      ? completedLessonIds
+      : [...completedLessonIds, currentLesson.id];
+    saveCompletedLessons(newCompleted);
+    set({
+      lessonCompleted: true,
+      completedLessonIds: newCompleted,
+    });
+  },
 
   startQuiz: () => {
     set({
@@ -550,6 +814,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   startPractice: () => {
     const { currentLesson } = get();
     if (!currentLesson) return;
+    if (!currentLesson.initialState) return;
 
     const state = currentLesson.initialState();
     const cluster: ClusterState = {
@@ -559,6 +824,16 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       nodes: state.nodes || [],
       services: state.services || [],
       events: state.events || [],
+      namespaces: state.namespaces || [],
+      configMaps: state.configMaps || [],
+      secrets: state.secrets || [],
+      ingresses: state.ingresses || [],
+      statefulSets: state.statefulSets || [],
+      daemonSets: state.daemonSets || [],
+      jobs: state.jobs || [],
+      cronJobs: state.cronJobs || [],
+      hpas: state.hpas || [],
+      helmReleases: state.helmReleases || [],
       tick: 0,
     };
 
@@ -591,7 +866,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       cluster,
       actions: [],
       terminalOutput,
-      isAutoRunning: false,
+      isAutoRunning: true,
       currentStep: 0,
       predictionPending,
       predictionResult: null,
@@ -607,6 +882,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     } else if (phase === 'quiz') {
       get().startQuiz();
     } else if (phase === 'practice') {
+      if (currentLesson.mode === 'lecture-quiz') return;
       // startPractice resets lessonCompleted — user is doing a fresh run.
       // The checkmark in the sidebar persists via completedLessonIds.
       get().startPractice();
@@ -734,6 +1010,49 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
       }
     }
 
+    if (pod.spec.failureMode === 'OOMKilled') {
+      if (pod.status.phase === 'Pending' && pod.status.tickCreated !== undefined && currentTick > pod.status.tickCreated) {
+        pod.status.phase = 'Running';
+        pod.status.reason = undefined;
+        continue;
+      }
+      if (pod.status.phase === 'Running') {
+        pod.status.phase = 'Failed';
+        pod.status.reason = 'OOMKilled';
+        pod.status.message = 'Container exceeded memory limit';
+        pod.status.restartCount = (pod.status.restartCount || 0) + 1;
+        events.push({
+          timestamp: Date.now(),
+          tick: currentTick,
+          type: 'Warning',
+          reason: 'OOMKilled',
+          objectKind: 'Pod',
+          objectName: pod.metadata.name,
+          message: `OOMKilled - container exceeded memory limit`,
+        });
+        pod.metadata.deletionTimestamp = Date.now();
+        continue;
+      }
+    }
+
+    // Handle Job pods: complete after completionTicks
+    if (pod.spec.completionTicks && pod.status.phase === 'Running') {
+      const age = currentTick - (pod.status.tickCreated || 0);
+      if (age >= pod.spec.completionTicks) {
+        pod.status.phase = 'Succeeded';
+        events.push({
+          timestamp: Date.now(),
+          tick: currentTick,
+          type: 'Normal',
+          reason: 'Completed',
+          objectKind: 'Pod',
+          objectName: pod.metadata.name,
+          message: `Pod completed successfully`,
+        });
+        continue;
+      }
+    }
+
     // Normal lifecycle: Pending → Running after 1 tick
     if (pod.status.phase === 'Pending' && !pod.status.reason) {
       if (pod.status.tickCreated !== undefined && currentTick > pod.status.tickCreated) {
@@ -742,6 +1061,16 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
           continue; // Scheduler hasn't assigned it yet
         }
         pod.status.phase = 'Running';
+
+        // Set readiness based on readiness probe
+        if (pod.spec.readinessProbe) {
+          const delay = pod.spec.readinessProbe.initialDelaySeconds || 0;
+          const age = currentTick - (pod.status.tickCreated || 0);
+          pod.status.ready = age > delay;
+        } else {
+          pod.status.ready = true;
+        }
+
         events.push({
           timestamp: Date.now(),
           tick: currentTick,
@@ -752,6 +1081,13 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
           message: `Started container with image "${pod.spec.image}"`,
         });
       }
+    }
+
+    // Update readiness for running pods with readiness probes
+    if (pod.status.phase === 'Running' && pod.spec.readinessProbe) {
+      const delay = pod.spec.readinessProbe.initialDelaySeconds || 0;
+      const age = currentTick - (pod.status.tickCreated || 0);
+      pod.status.ready = age > delay;
     }
 
     // Handle Failed pods (from node eviction) - RS controller will recreate

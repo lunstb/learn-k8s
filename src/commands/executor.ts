@@ -1,7 +1,7 @@
 import { useSimulatorStore } from '../simulation/store';
 import { parseCommand } from './parser';
 import type { ParsedCommand } from './parser';
-import type { Deployment, Pod, Service } from '../simulation/types';
+import type { Deployment, Pod, Service, Namespace, ConfigMap, Secret, Ingress, StatefulSet, DaemonSet, Job, HorizontalPodAutoscaler } from '../simulation/types';
 import { generateUID } from '../simulation/utils';
 
 export function executeCommand(input: string): string[] {
@@ -44,6 +44,14 @@ export function executeCommand(input: string): string[] {
       return handleCordon(cmd, false);
     case 'uncordon':
       return handleCordon(cmd, true);
+    case 'helm-install':
+      return handleHelmInstall(cmd);
+    case 'helm-list':
+      return handleHelmList();
+    case 'helm-uninstall':
+      return handleHelmUninstall(cmd);
+    case 'autoscale':
+      return handleAutoscale(cmd);
     default:
       return [`Error: Unimplemented action "${cmd.action}"`];
   }
@@ -183,7 +191,320 @@ function handleCreate(cmd: ParsedCommand): string[] {
     return [`service/${cmd.resourceName} created`];
   }
 
-  return [`Error: Cannot create resource type "${cmd.resourceType}". Supported: deployment, pod, service`];
+  if (cmd.resourceType === 'namespace') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing namespace name. Usage: kubectl create namespace <name>'];
+    }
+    if (store.cluster.namespaces.find((n) => n.metadata.name === cmd.resourceName)) {
+      return [`Error: namespace "${cmd.resourceName}" already exists`];
+    }
+    const ns: Namespace = {
+      kind: 'Namespace',
+      metadata: {
+        name: cmd.resourceName,
+        uid: generateUID(),
+        labels: { name: cmd.resourceName },
+        creationTimestamp: Date.now(),
+      },
+      status: { phase: 'Active' },
+    };
+    store.addNamespace(ns);
+    store.addEvent({
+      timestamp: Date.now(),
+      tick: store.cluster.tick,
+      type: 'Normal',
+      reason: 'Created',
+      objectKind: 'Namespace',
+      objectName: cmd.resourceName,
+      message: `Created namespace "${cmd.resourceName}"`,
+    });
+    return [`namespace/${cmd.resourceName} created`];
+  }
+
+  if (cmd.resourceType === 'configmap') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing configmap name. Usage: kubectl create configmap <name> --from-literal=key=val'];
+    }
+    if (store.cluster.configMaps.find((c) => c.metadata.name === cmd.resourceName)) {
+      return [`Error: configmap "${cmd.resourceName}" already exists`];
+    }
+    const data: Record<string, string> = {};
+    const fromLiteral = cmd.flags['from-literal'];
+    if (fromLiteral) {
+      const eqIdx = fromLiteral.indexOf('=');
+      if (eqIdx > 0) {
+        data[fromLiteral.substring(0, eqIdx)] = fromLiteral.substring(eqIdx + 1);
+      }
+    }
+    const cm: ConfigMap = {
+      kind: 'ConfigMap',
+      metadata: {
+        name: cmd.resourceName,
+        uid: generateUID(),
+        labels: {},
+        creationTimestamp: Date.now(),
+      },
+      data,
+    };
+    store.addConfigMap(cm);
+    store.addEvent({
+      timestamp: Date.now(),
+      tick: store.cluster.tick,
+      type: 'Normal',
+      reason: 'Created',
+      objectKind: 'ConfigMap',
+      objectName: cmd.resourceName,
+      message: `Created configmap "${cmd.resourceName}"`,
+    });
+    return [`configmap/${cmd.resourceName} created`];
+  }
+
+  if (cmd.resourceType === 'secret') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing secret name. Usage: kubectl create secret generic <name> --from-literal=key=val'];
+    }
+    if (store.cluster.secrets.find((s) => s.metadata.name === cmd.resourceName)) {
+      return [`Error: secret "${cmd.resourceName}" already exists`];
+    }
+    const data: Record<string, string> = {};
+    const fromLiteral = cmd.flags['from-literal'];
+    if (fromLiteral) {
+      const eqIdx = fromLiteral.indexOf('=');
+      if (eqIdx > 0) {
+        data[fromLiteral.substring(0, eqIdx)] = btoa(fromLiteral.substring(eqIdx + 1));
+      }
+    }
+    const secret: Secret = {
+      kind: 'Secret',
+      metadata: {
+        name: cmd.resourceName,
+        uid: generateUID(),
+        labels: {},
+        creationTimestamp: Date.now(),
+      },
+      type: 'Opaque',
+      data,
+    };
+    store.addSecret(secret);
+    store.addEvent({
+      timestamp: Date.now(),
+      tick: store.cluster.tick,
+      type: 'Normal',
+      reason: 'Created',
+      objectKind: 'Secret',
+      objectName: cmd.resourceName,
+      message: `Created secret "${cmd.resourceName}"`,
+    });
+    return [`secret/${cmd.resourceName} created`];
+  }
+
+  if (cmd.resourceType === 'ingress') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing ingress name. Usage: kubectl create ingress <name> --rule=host/path=svc:port'];
+    }
+    if (store.cluster.ingresses.find((i) => i.metadata.name === cmd.resourceName)) {
+      return [`Error: ingress "${cmd.resourceName}" already exists`];
+    }
+    const ruleStr = cmd.flags.rule || '';
+    const rules: Ingress['spec']['rules'] = [];
+    if (ruleStr) {
+      // Parse "host/path=svc:port"
+      const eqIdx = ruleStr.indexOf('=');
+      if (eqIdx > 0) {
+        const hostPath = ruleStr.substring(0, eqIdx);
+        const svcPort = ruleStr.substring(eqIdx + 1);
+        const slashIdx = hostPath.indexOf('/');
+        const host = slashIdx > 0 ? hostPath.substring(0, slashIdx) : hostPath;
+        const path = slashIdx > 0 ? hostPath.substring(slashIdx) : '/';
+        const colonIdx = svcPort.indexOf(':');
+        const serviceName = colonIdx > 0 ? svcPort.substring(0, colonIdx) : svcPort;
+        const servicePort = colonIdx > 0 ? parseInt(svcPort.substring(colonIdx + 1), 10) : 80;
+        rules.push({ host, path, serviceName, servicePort });
+      }
+    }
+    const ing: Ingress = {
+      kind: 'Ingress',
+      metadata: {
+        name: cmd.resourceName,
+        uid: generateUID(),
+        labels: {},
+        creationTimestamp: Date.now(),
+      },
+      spec: { rules },
+      status: { loadBalancer: { ip: '10.0.0.1' } },
+    };
+    store.addIngress(ing);
+    store.addEvent({
+      timestamp: Date.now(),
+      tick: store.cluster.tick,
+      type: 'Normal',
+      reason: 'Created',
+      objectKind: 'Ingress',
+      objectName: cmd.resourceName,
+      message: `Created ingress "${cmd.resourceName}"`,
+    });
+    return [`ingress.networking.k8s.io/${cmd.resourceName} created`];
+  }
+
+  if (cmd.resourceType === 'statefulset') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing statefulset name. Usage: kubectl create statefulset <name> --image=<image> [--replicas=N]'];
+    }
+    if (store.cluster.statefulSets.find((s) => s.metadata.name === cmd.resourceName)) {
+      return [`Error: statefulset "${cmd.resourceName}" already exists`];
+    }
+    const image = cmd.flags.image || 'nginx';
+    const replicas = parseInt(cmd.flags.replicas || '1', 10);
+    const sts: StatefulSet = {
+      kind: 'StatefulSet',
+      metadata: {
+        name: cmd.resourceName,
+        uid: generateUID(),
+        labels: { app: cmd.resourceName },
+        creationTimestamp: Date.now(),
+      },
+      spec: {
+        replicas,
+        selector: { app: cmd.resourceName },
+        serviceName: cmd.resourceName,
+        template: {
+          labels: { app: cmd.resourceName },
+          spec: { image },
+        },
+      },
+      status: { replicas: 0, readyReplicas: 0, currentReplicas: 0 },
+    };
+    store.addStatefulSet(sts);
+    store.addEvent({
+      timestamp: Date.now(),
+      tick: store.cluster.tick,
+      type: 'Normal',
+      reason: 'Created',
+      objectKind: 'StatefulSet',
+      objectName: cmd.resourceName,
+      message: `Created statefulset "${cmd.resourceName}" with ${replicas} replicas`,
+    });
+    return [`statefulset.apps/${cmd.resourceName} created`];
+  }
+
+  if (cmd.resourceType === 'daemonset') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing daemonset name. Usage: kubectl create daemonset <name> --image=<image>'];
+    }
+    if (store.cluster.daemonSets.find((d) => d.metadata.name === cmd.resourceName)) {
+      return [`Error: daemonset "${cmd.resourceName}" already exists`];
+    }
+    const image = cmd.flags.image || 'nginx';
+    const ds: DaemonSet = {
+      kind: 'DaemonSet',
+      metadata: {
+        name: cmd.resourceName,
+        uid: generateUID(),
+        labels: { app: cmd.resourceName },
+        creationTimestamp: Date.now(),
+      },
+      spec: {
+        selector: { app: cmd.resourceName },
+        template: {
+          labels: { app: cmd.resourceName },
+          spec: { image },
+        },
+      },
+      status: { desiredNumberScheduled: 0, currentNumberScheduled: 0, numberReady: 0 },
+    };
+    store.addDaemonSet(ds);
+    store.addEvent({
+      timestamp: Date.now(),
+      tick: store.cluster.tick,
+      type: 'Normal',
+      reason: 'Created',
+      objectKind: 'DaemonSet',
+      objectName: cmd.resourceName,
+      message: `Created daemonset "${cmd.resourceName}"`,
+    });
+    return [`daemonset.apps/${cmd.resourceName} created`];
+  }
+
+  if (cmd.resourceType === 'job') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing job name. Usage: kubectl create job <name> --image=<image> [--completions=N]'];
+    }
+    if (store.cluster.jobs.find((j) => j.metadata.name === cmd.resourceName)) {
+      return [`Error: job "${cmd.resourceName}" already exists`];
+    }
+    const image = cmd.flags.image || 'busybox';
+    const completions = parseInt(cmd.flags.completions || '1', 10);
+    const parallelism = parseInt(cmd.flags.parallelism || '1', 10);
+    const job: Job = {
+      kind: 'Job',
+      metadata: {
+        name: cmd.resourceName,
+        uid: generateUID(),
+        labels: { 'job-name': cmd.resourceName },
+        creationTimestamp: Date.now(),
+      },
+      spec: {
+        completions,
+        parallelism,
+        backoffLimit: 6,
+        template: {
+          labels: { 'job-name': cmd.resourceName },
+          spec: { image, completionTicks: 2, restartPolicy: 'Never' },
+        },
+      },
+      status: { succeeded: 0, failed: 0, active: 0, startTime: store.cluster.tick },
+    };
+    store.addJob(job);
+    store.addEvent({
+      timestamp: Date.now(),
+      tick: store.cluster.tick,
+      type: 'Normal',
+      reason: 'Created',
+      objectKind: 'Job',
+      objectName: cmd.resourceName,
+      message: `Created job "${cmd.resourceName}" with ${completions} completions`,
+    });
+    return [`job.batch/${cmd.resourceName} created`];
+  }
+
+  if (cmd.resourceType === 'cronjob') {
+    if (!cmd.resourceName) {
+      return ['Error: Missing cronjob name. Usage: kubectl create cronjob <name> --image=<image> --schedule=every-5-ticks'];
+    }
+    if (store.cluster.cronJobs.find((c) => c.metadata.name === cmd.resourceName)) {
+      return [`Error: cronjob "${cmd.resourceName}" already exists`];
+    }
+    const image = cmd.flags.image || 'busybox';
+    const schedule = cmd.flags.schedule || 'every-5-ticks';
+    const store2 = useSimulatorStore.getState();
+    store2.addCronJob({
+      kind: 'CronJob',
+      metadata: {
+        name: cmd.resourceName,
+        uid: generateUID(),
+        labels: { 'cronjob-name': cmd.resourceName },
+        creationTimestamp: Date.now(),
+      },
+      spec: {
+        schedule,
+        jobTemplate: {
+          spec: {
+            completions: 1,
+            parallelism: 1,
+            backoffLimit: 6,
+            template: {
+              labels: { 'job-name': cmd.resourceName },
+              spec: { image, completionTicks: 2, restartPolicy: 'Never' },
+            },
+          },
+        },
+      },
+      status: { active: 0 },
+    });
+    return [`cronjob.batch/${cmd.resourceName} created`];
+  }
+
+  return [`Error: Cannot create resource type "${cmd.resourceType}". Supported: deployment, pod, service, namespace, configmap, secret, ingress, statefulset, daemonset, job, cronjob`];
 }
 
 function handleGet(cmd: ParsedCommand): string[] {
@@ -328,6 +649,181 @@ function handleGet(cmd: ParsedCommand): string[] {
     return [header, ...rows];
   }
 
+  if (cmd.resourceType === 'namespace') {
+    const nsList = cmd.resourceName
+      ? store.cluster.namespaces.filter((n) => n.metadata.name === cmd.resourceName)
+      : store.cluster.namespaces;
+    if (cmd.resourceName && nsList.length === 0) {
+      return [`Error: namespace "${cmd.resourceName}" not found`];
+    }
+    if (nsList.length === 0) {
+      return ['No namespaces found.'];
+    }
+    const header = padRow(['NAME', 'STATUS']);
+    const rows = nsList.map((n) => padRow([n.metadata.name, n.status.phase]));
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'configmap') {
+    const cmList = cmd.resourceName
+      ? store.cluster.configMaps.filter((c) => c.metadata.name === cmd.resourceName)
+      : store.cluster.configMaps;
+    if (cmd.resourceName && cmList.length === 0) {
+      return [`Error: configmap "${cmd.resourceName}" not found`];
+    }
+    if (cmList.length === 0) {
+      return ['No configmaps found.'];
+    }
+    const header = padRow(['NAME', 'DATA']);
+    const rows = cmList.map((c) => padRow([c.metadata.name, String(Object.keys(c.data).length)]));
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'secret') {
+    const secretList = cmd.resourceName
+      ? store.cluster.secrets.filter((s) => s.metadata.name === cmd.resourceName)
+      : store.cluster.secrets;
+    if (cmd.resourceName && secretList.length === 0) {
+      return [`Error: secret "${cmd.resourceName}" not found`];
+    }
+    if (secretList.length === 0) {
+      return ['No secrets found.'];
+    }
+    const header = padRow(['NAME', 'TYPE', 'DATA']);
+    const rows = secretList.map((s) => padRow([s.metadata.name, s.type, String(Object.keys(s.data).length)]));
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'ingress') {
+    const ingList = cmd.resourceName
+      ? store.cluster.ingresses.filter((i) => i.metadata.name === cmd.resourceName)
+      : store.cluster.ingresses;
+    if (cmd.resourceName && ingList.length === 0) {
+      return [`Error: ingress "${cmd.resourceName}" not found`];
+    }
+    if (ingList.length === 0) {
+      return ['No ingresses found.'];
+    }
+    const header = padRow(['NAME', 'HOSTS', 'ADDRESS']);
+    const rows = ingList.map((i) => {
+      const hosts = i.spec.rules.map((r) => r.host).join(',') || '*';
+      const address = i.status.loadBalancer?.ip || '<pending>';
+      return padRow([i.metadata.name, hosts, address]);
+    });
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'statefulset') {
+    const stsList = cmd.resourceName
+      ? store.cluster.statefulSets.filter((s) => s.metadata.name === cmd.resourceName)
+      : store.cluster.statefulSets;
+    if (cmd.resourceName && stsList.length === 0) {
+      return [`Error: statefulset "${cmd.resourceName}" not found`];
+    }
+    if (stsList.length === 0) {
+      return ['No statefulsets found.'];
+    }
+    const header = padRow(['NAME', 'READY', 'IMAGE']);
+    const rows = stsList.map((s) =>
+      padRow([s.metadata.name, `${s.status.readyReplicas}/${s.spec.replicas}`, s.spec.template.spec.image])
+    );
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'daemonset') {
+    const dsList = cmd.resourceName
+      ? store.cluster.daemonSets.filter((d) => d.metadata.name === cmd.resourceName)
+      : store.cluster.daemonSets;
+    if (cmd.resourceName && dsList.length === 0) {
+      return [`Error: daemonset "${cmd.resourceName}" not found`];
+    }
+    if (dsList.length === 0) {
+      return ['No daemonsets found.'];
+    }
+    const header = padRow(['NAME', 'DESIRED', 'CURRENT', 'READY']);
+    const rows = dsList.map((d) =>
+      padRow([
+        d.metadata.name,
+        String(d.status.desiredNumberScheduled),
+        String(d.status.currentNumberScheduled),
+        String(d.status.numberReady),
+      ])
+    );
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'job') {
+    const jobList = cmd.resourceName
+      ? store.cluster.jobs.filter((j) => j.metadata.name === cmd.resourceName)
+      : store.cluster.jobs;
+    if (cmd.resourceName && jobList.length === 0) {
+      return [`Error: job "${cmd.resourceName}" not found`];
+    }
+    if (jobList.length === 0) {
+      return ['No jobs found.'];
+    }
+    const header = padRow(['NAME', 'COMPLETIONS', 'ACTIVE', 'STATUS']);
+    const rows = jobList.map((j) => {
+      const status = j.status.completionTime ? 'Complete' : 'Running';
+      return padRow([
+        j.metadata.name,
+        `${j.status.succeeded}/${j.spec.completions}`,
+        String(j.status.active),
+        status,
+      ]);
+    });
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'cronjob') {
+    const cjList = cmd.resourceName
+      ? store.cluster.cronJobs.filter((c) => c.metadata.name === cmd.resourceName)
+      : store.cluster.cronJobs;
+    if (cmd.resourceName && cjList.length === 0) {
+      return [`Error: cronjob "${cmd.resourceName}" not found`];
+    }
+    if (cjList.length === 0) {
+      return ['No cronjobs found.'];
+    }
+    const header = padRow(['NAME', 'SCHEDULE', 'ACTIVE', 'LAST SCHEDULE']);
+    const rows = cjList.map((c) =>
+      padRow([
+        c.metadata.name,
+        c.spec.schedule,
+        String(c.status.active),
+        c.status.lastScheduleTime ? `tick ${c.status.lastScheduleTime}` : '<none>',
+      ])
+    );
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'hpa') {
+    const hpaList = cmd.resourceName
+      ? store.cluster.hpas.filter((h) => h.metadata.name === cmd.resourceName)
+      : store.cluster.hpas;
+    if (cmd.resourceName && hpaList.length === 0) {
+      return [`Error: hpa "${cmd.resourceName}" not found`];
+    }
+    if (hpaList.length === 0) {
+      return ['No HPAs found.'];
+    }
+    const header = padRow(['NAME', 'REFERENCE', 'TARGETS', 'MINPODS', 'MAXPODS', 'REPLICAS']);
+    const rows = hpaList.map((h) => {
+      const cpuStr = h.status.currentCPUUtilizationPercentage !== undefined
+        ? `${h.status.currentCPUUtilizationPercentage}%/${h.spec.targetCPUUtilizationPercentage}%`
+        : `<unknown>/${h.spec.targetCPUUtilizationPercentage}%`;
+      return padRow([
+        h.metadata.name,
+        `${h.spec.scaleTargetRef.kind}/${h.spec.scaleTargetRef.name}`,
+        cpuStr,
+        String(h.spec.minReplicas),
+        String(h.spec.maxReplicas),
+        String(h.status.currentReplicas),
+      ]);
+    });
+    return [header, ...rows];
+  }
+
   return [`Error: Unknown resource type "${cmd.resourceType}"`];
 }
 
@@ -432,6 +928,75 @@ function handleDelete(cmd: ParsedCommand): string[] {
     return [`service "${cmd.resourceName}" deleted`];
   }
 
+  if (cmd.resourceType === 'namespace') {
+    const ns = store.cluster.namespaces.find((n) => n.metadata.name === cmd.resourceName);
+    if (!ns) return [`Error: namespace "${cmd.resourceName}" not found`];
+    store.removeNamespace(ns.metadata.uid);
+    return [`namespace "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'configmap') {
+    const cm = store.cluster.configMaps.find((c) => c.metadata.name === cmd.resourceName);
+    if (!cm) return [`Error: configmap "${cmd.resourceName}" not found`];
+    store.removeConfigMap(cm.metadata.uid);
+    return [`configmap "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'secret') {
+    const secret = store.cluster.secrets.find((s) => s.metadata.name === cmd.resourceName);
+    if (!secret) return [`Error: secret "${cmd.resourceName}" not found`];
+    store.removeSecret(secret.metadata.uid);
+    return [`secret "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'ingress') {
+    const ing = store.cluster.ingresses.find((i) => i.metadata.name === cmd.resourceName);
+    if (!ing) return [`Error: ingress "${cmd.resourceName}" not found`];
+    store.removeIngress(ing.metadata.uid);
+    return [`ingress "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'statefulset') {
+    const sts = store.cluster.statefulSets.find((s) => s.metadata.name === cmd.resourceName);
+    if (!sts) return [`Error: statefulset "${cmd.resourceName}" not found`];
+    const ownedPods = store.cluster.pods.filter((p) => p.metadata.ownerReference?.uid === sts.metadata.uid);
+    for (const p of ownedPods) store.removePod(p.metadata.uid);
+    store.removeStatefulSet(sts.metadata.uid);
+    return [`statefulset.apps "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'daemonset') {
+    const ds = store.cluster.daemonSets.find((d) => d.metadata.name === cmd.resourceName);
+    if (!ds) return [`Error: daemonset "${cmd.resourceName}" not found`];
+    const ownedPods = store.cluster.pods.filter((p) => p.metadata.ownerReference?.uid === ds.metadata.uid);
+    for (const p of ownedPods) store.removePod(p.metadata.uid);
+    store.removeDaemonSet(ds.metadata.uid);
+    return [`daemonset.apps "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'job') {
+    const job = store.cluster.jobs.find((j) => j.metadata.name === cmd.resourceName);
+    if (!job) return [`Error: job "${cmd.resourceName}" not found`];
+    const ownedPods = store.cluster.pods.filter((p) => p.metadata.ownerReference?.uid === job.metadata.uid);
+    for (const p of ownedPods) store.removePod(p.metadata.uid);
+    store.removeJob(job.metadata.uid);
+    return [`job.batch "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'cronjob') {
+    const cj = store.cluster.cronJobs.find((c) => c.metadata.name === cmd.resourceName);
+    if (!cj) return [`Error: cronjob "${cmd.resourceName}" not found`];
+    store.removeCronJob(cj.metadata.uid);
+    return [`cronjob.batch "${cmd.resourceName}" deleted`];
+  }
+
+  if (cmd.resourceType === 'hpa') {
+    const hpa = store.cluster.hpas.find((h) => h.metadata.name === cmd.resourceName);
+    if (!hpa) return [`Error: hpa "${cmd.resourceName}" not found`];
+    store.removeHPA(hpa.metadata.uid);
+    return [`horizontalpodautoscaler.autoscaling "${cmd.resourceName}" deleted`];
+  }
+
   return [`Error: Cannot delete resource type "${cmd.resourceType}"`];
 }
 
@@ -480,7 +1045,14 @@ function handleScale(cmd: ParsedCommand): string[] {
     return [`replicaset.apps/${cmd.resourceName} scaled to ${replicas}`];
   }
 
-  return [`Error: Cannot scale resource type "${cmd.resourceType}". Supported: deployment, replicaset`];
+  if (cmd.resourceType === 'statefulset') {
+    const sts = store.cluster.statefulSets.find((s) => s.metadata.name === cmd.resourceName);
+    if (!sts) return [`Error: statefulset "${cmd.resourceName}" not found`];
+    store.updateStatefulSet(sts.metadata.uid, { spec: { ...sts.spec, replicas } });
+    return [`statefulset.apps/${cmd.resourceName} scaled to ${replicas}`];
+  }
+
+  return [`Error: Cannot scale resource type "${cmd.resourceType}". Supported: deployment, replicaset, statefulset`];
 }
 
 function handleSetImage(cmd: ParsedCommand): string[] {
@@ -602,6 +1174,9 @@ function handleDescribe(cmd: ParsedCommand): string[] {
       `Labels:        ${Object.entries(pod.metadata.labels).map(([k, v]) => `${k}=${v}`).join(', ') || '<none>'}`,
       `Owner:         ${pod.metadata.ownerReference ? `${pod.metadata.ownerReference.kind}/${pod.metadata.ownerReference.name}` : '<none>'}`,
     );
+    if (pod.status.ready !== undefined) {
+      lines.push(`Ready:         ${pod.status.ready}`);
+    }
     if (eventLines.length > 0) {
       lines.push('Events:', ...eventLines);
     }
@@ -637,6 +1212,65 @@ function handleDescribe(cmd: ParsedCommand): string[] {
       `Port:          ${svc.spec.port}`,
       `Endpoints:     ${svc.status.endpoints.join(', ') || '<none>'}`,
       ...(eventLines.length > 0 ? ['Events:', ...eventLines] : []),
+    ];
+  }
+
+  if (cmd.resourceType === 'configmap') {
+    const cm = store.cluster.configMaps.find((c) => c.metadata.name === cmd.resourceName);
+    if (!cm) return [`Error: configmap "${cmd.resourceName}" not found`];
+    const lines = [`Name:          ${cm.metadata.name}`, `Data:`];
+    for (const [key, value] of Object.entries(cm.data)) {
+      lines.push(`  ${key}: ${value}`);
+    }
+    return lines;
+  }
+
+  if (cmd.resourceType === 'secret') {
+    const secret = store.cluster.secrets.find((s) => s.metadata.name === cmd.resourceName);
+    if (!secret) return [`Error: secret "${cmd.resourceName}" not found`];
+    const lines = [`Name:          ${secret.metadata.name}`, `Type:          ${secret.type}`, `Data:`];
+    for (const key of Object.keys(secret.data)) {
+      lines.push(`  ${key}: ***`);
+    }
+    return lines;
+  }
+
+  if (cmd.resourceType === 'statefulset') {
+    const sts = store.cluster.statefulSets.find((s) => s.metadata.name === cmd.resourceName);
+    if (!sts) return [`Error: statefulset "${cmd.resourceName}" not found`];
+    const pods = store.cluster.pods.filter((p) => p.metadata.ownerReference?.uid === sts.metadata.uid);
+    return [
+      `Name:          ${sts.metadata.name}`,
+      `Replicas:      ${sts.spec.replicas} desired | ${sts.status.currentReplicas} current | ${sts.status.readyReplicas} ready`,
+      `Image:         ${sts.spec.template.spec.image}`,
+      `ServiceName:   ${sts.spec.serviceName}`,
+      `Pods:          ${pods.map((p) => p.metadata.name).join(', ') || '<none>'}`,
+    ];
+  }
+
+  if (cmd.resourceType === 'daemonset') {
+    const ds = store.cluster.daemonSets.find((d) => d.metadata.name === cmd.resourceName);
+    if (!ds) return [`Error: daemonset "${cmd.resourceName}" not found`];
+    return [
+      `Name:          ${ds.metadata.name}`,
+      `Desired:       ${ds.status.desiredNumberScheduled}`,
+      `Current:       ${ds.status.currentNumberScheduled}`,
+      `Ready:         ${ds.status.numberReady}`,
+      `Image:         ${ds.spec.template.spec.image}`,
+    ];
+  }
+
+  if (cmd.resourceType === 'job') {
+    const job = store.cluster.jobs.find((j) => j.metadata.name === cmd.resourceName);
+    if (!job) return [`Error: job "${cmd.resourceName}" not found`];
+    return [
+      `Name:          ${job.metadata.name}`,
+      `Completions:   ${job.status.succeeded}/${job.spec.completions}`,
+      `Parallelism:   ${job.spec.parallelism}`,
+      `Active:        ${job.status.active}`,
+      `Failed:        ${job.status.failed}`,
+      `Image:         ${job.spec.template.spec.image}`,
+      `Status:        ${job.status.completionTime ? 'Complete' : 'Running'}`,
     ];
   }
 
@@ -706,6 +1340,140 @@ function handleCordon(cmd: ParsedCommand, uncordon: boolean): string[] {
   return [`node/${cmd.resourceName} ${uncordon ? 'uncordoned' : 'cordoned'}`];
 }
 
+function handleHelmInstall(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  const releaseName = cmd.resourceName;
+  const chart = cmd.flags.chart || 'nginx-chart';
+
+  if (store.cluster.helmReleases.find((r) => r.name === releaseName)) {
+    return [`Error: cannot re-use a name that is still in use`];
+  }
+
+  const deploymentName = `${releaseName}-${chart.replace('-chart', '')}`;
+
+  // Create deployment for the helm release
+  const dep: Deployment = {
+    kind: 'Deployment',
+    metadata: {
+      name: deploymentName,
+      uid: generateUID(),
+      labels: { app: deploymentName, 'helm-release': releaseName },
+      creationTimestamp: Date.now(),
+    },
+    spec: {
+      replicas: parseInt(cmd.flags.replicas || '2', 10),
+      selector: { app: deploymentName },
+      template: {
+        labels: { app: deploymentName, 'helm-release': releaseName },
+        spec: { image: cmd.flags.image || 'nginx:latest' },
+      },
+      strategy: { type: 'RollingUpdate', maxSurge: 1, maxUnavailable: 1 },
+    },
+    status: {
+      replicas: 0,
+      updatedReplicas: 0,
+      readyReplicas: 0,
+      availableReplicas: 0,
+      conditions: [],
+    },
+  };
+
+  store.addDeployment(dep);
+  store.addHelmRelease({
+    name: releaseName,
+    chart,
+    status: 'deployed',
+    deploymentName,
+  });
+
+  return [
+    `NAME: ${releaseName}`,
+    `STATUS: deployed`,
+    `CHART: ${chart}`,
+    ``,
+    `deployment.apps/${deploymentName} created`,
+  ];
+}
+
+function handleHelmList(): string[] {
+  const store = useSimulatorStore.getState();
+  const releases = store.cluster.helmReleases.filter((r) => r.status === 'deployed');
+  if (releases.length === 0) {
+    return ['No releases found.'];
+  }
+  const header = padRow(['NAME', 'CHART', 'STATUS']);
+  const rows = releases.map((r) => padRow([r.name, r.chart, r.status]));
+  return [header, ...rows];
+}
+
+function handleHelmUninstall(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  const release = store.cluster.helmReleases.find(
+    (r) => r.name === cmd.resourceName && r.status === 'deployed'
+  );
+  if (!release) {
+    return [`Error: release "${cmd.resourceName}" not found`];
+  }
+
+  // Delete the associated deployment
+  const dep = store.cluster.deployments.find(
+    (d) => d.metadata.name === release.deploymentName
+  );
+  if (dep) {
+    const ownedRS = store.cluster.replicaSets.filter(
+      (rs) => rs.metadata.ownerReference?.uid === dep.metadata.uid
+    );
+    for (const rs of ownedRS) {
+      const rsPods = store.cluster.pods.filter(
+        (p) => p.metadata.ownerReference?.uid === rs.metadata.uid
+      );
+      for (const p of rsPods) store.removePod(p.metadata.uid);
+      store.removeReplicaSet(rs.metadata.uid);
+    }
+    store.removeDeployment(dep.metadata.uid);
+  }
+
+  store.removeHelmRelease(release.name);
+  return [`release "${cmd.resourceName}" uninstalled`];
+}
+
+function handleAutoscale(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  if (cmd.resourceType !== 'deployment') {
+    return ['Error: autoscale only supports deployments.'];
+  }
+
+  const dep = store.cluster.deployments.find((d) => d.metadata.name === cmd.resourceName);
+  if (!dep) return [`Error: deployment "${cmd.resourceName}" not found`];
+
+  const min = parseInt(cmd.flags.min || '1', 10);
+  const max = parseInt(cmd.flags.max || '10', 10);
+  const cpuPercent = parseInt(cmd.flags['cpu-percent'] || '80', 10);
+
+  const hpa: HorizontalPodAutoscaler = {
+    kind: 'HorizontalPodAutoscaler',
+    metadata: {
+      name: cmd.resourceName,
+      uid: generateUID(),
+      labels: {},
+      creationTimestamp: Date.now(),
+    },
+    spec: {
+      scaleTargetRef: { kind: 'Deployment', name: cmd.resourceName },
+      minReplicas: min,
+      maxReplicas: max,
+      targetCPUUtilizationPercentage: cpuPercent,
+    },
+    status: {
+      currentReplicas: dep.spec.replicas,
+      desiredReplicas: dep.spec.replicas,
+    },
+  };
+
+  store.addHPA(hpa);
+  return [`horizontalpodautoscaler.autoscaling/${cmd.resourceName} autoscaled`];
+}
+
 function padRow(cols: string[]): string {
   const widths = [28, 18, 14, 14, 30];
   return cols.map((col, i) => col.padEnd(widths[i] || 20)).join('');
@@ -718,16 +1486,30 @@ function getHelpText(): string[] {
     '  kubectl create deployment <name> --image=<image> [--replicas=N]',
     '  kubectl create pod <name> --image=<image>',
     '  kubectl create service <name> --selector=app=myapp --port=80',
-    '  kubectl get deployments|replicasets|pods|nodes|services|events [name]',
-    '  kubectl describe deployment|replicaset|pod|node|service <name>',
-    '  kubectl scale deployment|replicaset <name> --replicas=N',
-    '  kubectl set image deployment/<name> <image>',
-    '  kubectl delete deployment|replicaset|pod|service <name>',
-    '  kubectl rollout status deployment/<name>',
-    '  kubectl cordon <node-name>',
-    '  kubectl uncordon <node-name>',
+    '  kubectl create namespace <name>',
+    '  kubectl create configmap <name> --from-literal=key=val',
+    '  kubectl create secret generic <name> --from-literal=key=val',
+    '  kubectl create ingress <name> --rule=host/path=svc:port',
+    '  kubectl create statefulset <name> --image=<image> [--replicas=N]',
+    '  kubectl create daemonset <name> --image=<image>',
+    '  kubectl create job <name> --image=<image> [--completions=N]',
+    '  kubectl create cronjob <name> --image=<image> --schedule=every-N-ticks',
     '',
-    'Shortcuts: deploy, rs, po, no, svc, ev for resource types',
+    '  kubectl get deployments|pods|services|nodes|events|namespaces|...',
+    '  kubectl get configmaps|secrets|ingresses|statefulsets|daemonsets|jobs|cronjobs|hpa',
+    '  kubectl describe <resource-type> <name>',
+    '  kubectl scale deployment|replicaset|statefulset <name> --replicas=N',
+    '  kubectl set image deployment/<name> <image>',
+    '  kubectl delete <resource-type> <name>',
+    '  kubectl rollout status deployment/<name>',
+    '  kubectl cordon|uncordon <node-name>',
+    '  kubectl autoscale deployment <name> --min=N --max=N --cpu-percent=N',
+    '',
+    '  helm install <release-name> <chart>',
+    '  helm list',
+    '  helm uninstall <release-name>',
+    '',
+    'Shortcuts: deploy, rs, po, no, svc, ev, ns, cm, ing, sts, ds, cj, hpa',
     'The "kubectl" prefix is optional.',
     '',
     'Controls:',

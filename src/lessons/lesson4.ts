@@ -6,6 +6,7 @@ export const lesson4: Lesson = {
   title: 'Deployments and Updates',
   description:
     'See how Deployments orchestrate rolling updates by creating new ReplicaSets and gradually replacing pods.',
+  mode: 'full',
   goalDescription:
     'Update the image to nginx:2.0 and Reconcile until all pods run the new version.',
   successMessage:
@@ -93,52 +94,68 @@ export const lesson4: Lesson = {
   },
   quiz: [
     {
-      question: 'What happens when you change a Deployment\'s image?',
+      question:
+        'A Deployment has replicas=3, maxSurge=1, maxUnavailable=0. During a rolling update, what is the minimum number of pods serving traffic at any point?',
       choices: [
-        'Existing pods are updated in-place',
-        'A new ReplicaSet is created for the new template',
-        'The old ReplicaSet\'s template is updated',
-        'All pods restart simultaneously',
+        '0 — during the switchover there is a brief moment with no pods',
+        '2 — one pod can be unavailable during the transition',
+        '4 — maxSurge adds an extra pod, raising the minimum',
+        '3 — maxUnavailable=0 means the full desired count must always be available',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
-        'Pods are immutable. The Deployment creates a new RS with the new template hash and orchestrates a rolling transition from old RS to new RS.',
+        'maxUnavailable=0 guarantees that the number of available pods never drops below the desired count. ' +
+        'The Deployment must create a new pod (using the maxSurge=1 allowance to go up to 4 total) and wait for it to become Ready ' +
+        'before terminating an old pod. This is the safest configuration: you always have at least 3 pods serving traffic, ' +
+        'but it is slower because each new pod must prove itself before an old one is removed.',
     },
     {
-      question: 'During a rolling update, how many ReplicaSets exist?',
+      question:
+        'Why do two ReplicaSets coexist during a rolling update, rather than updating pods in the existing ReplicaSet?',
       choices: [
-        'Only 1 — the old one is deleted immediately',
-        'At least 2 — old and new coexist during the transition',
-        '3 — old, transitional, and new',
-        'It depends on the number of pods',
+        'It is a design limitation — Kubernetes plans to support in-place updates in a future version',
+        'Having two ReplicaSets allows instant rollback: if the new version fails, Kubernetes scales the old RS back up instead of recreating everything',
+        'Two ReplicaSets use less memory than modifying pods in a single ReplicaSet',
+        'Kubernetes randomly chooses between one-RS and two-RS strategies based on cluster load',
       ],
       correctIndex: 1,
       explanation:
-        'Both the old and new ReplicaSets exist during a rolling update. The old RS scales down as the new RS scales up.',
+        'The two-ReplicaSet design is intentional and powerful. Pods are immutable — you cannot change a running pod\'s image. ' +
+        'By keeping the old RS around (scaled to 0 after completion), Kubernetes retains the old template. If the new version starts failing, ' +
+        'a rollback simply scales the old RS back up and the new RS down — no need to rebuild anything. ' +
+        'This is also why Deployments keep a revision history (configurable via revisionHistoryLimit).',
     },
     {
-      question: 'What does maxSurge=1 mean during a rolling update?',
+      question:
+        'You have a Deployment with replicas=4, maxSurge=2, maxUnavailable=1. What is the maximum total number of pods that can exist during the update?',
       choices: [
-        'At most 1 pod can be unavailable',
-        'At most 1 extra pod above desired count can exist',
-        'Only 1 pod is updated at a time',
-        'The update takes 1 tick',
+        '4 — the total never exceeds the desired count',
+        '5 — desired plus maxUnavailable',
+        '6 — desired (4) plus maxSurge (2)',
+        '7 — desired plus maxSurge plus maxUnavailable',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
-        'maxSurge=1 means total pods can temporarily be desired+1. If replicas=3 and maxSurge=1, you can have up to 4 pods during the update.',
+        'maxSurge controls how many extra pods above the desired count can exist simultaneously. With replicas=4 and maxSurge=2, ' +
+        'the maximum total is 4+2=6 pods. Meanwhile, maxUnavailable=1 means at least 3 pods must be available (4-1=3). ' +
+        'These two parameters work together: maxSurge determines how fast you create new pods, and maxUnavailable determines how fast you can remove old ones. ' +
+        'Higher values of both mean faster rollouts but more resource usage and less safety.',
     },
     {
-      question: 'When would you use the Recreate strategy instead of RollingUpdate?',
+      question:
+        'Your application writes to a database and the new version expects a column that hasn\'t been added yet. You deploy the new version using the default RollingUpdate strategy. What happens?',
       choices: [
-        'When you want faster updates',
-        'When your app can\'t handle two versions running at the same time',
-        'When you have more than 10 replicas',
-        'Recreate is always preferred',
+        'Kubernetes detects the schema mismatch and pauses the rollout automatically',
+        'Kubernetes automatically runs database migrations before starting new pods',
+        'Old-version pods work fine, but new-version pods crash on startup, causing the rollout to stall with mixed versions running simultaneously',
+        'The rollout completes instantly because RollingUpdate skips health checks',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
-        'Recreate kills all old pods before creating new ones. This causes downtime but ensures only one version runs at a time — important for database migrations or apps with incompatible versions.',
+        'Kubernetes has no knowledge of your application\'s database schema. During a RollingUpdate, both old and new versions run simultaneously. ' +
+        'If the new version crashes (because the expected column is missing), the new pods enter CrashLoopBackOff and the rollout stalls — ' +
+        'old pods keep serving, but you are stuck with a partially completed update. This is the classic case where the Recreate strategy is appropriate: ' +
+        'you accept brief downtime to ensure only one version runs at a time, deploying the schema change before the code change.',
     },
   ],
   initialState: () => {

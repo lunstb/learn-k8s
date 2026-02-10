@@ -32,16 +32,24 @@ export interface Lesson {
   id: number;
   title: string;
   description: string;
+  mode: 'full' | 'lecture-quiz';
   goalDescription: string;
   successMessage: string;
   hints?: string[];
-  initialState: () => Omit<ClusterState, 'tick'>;
-  goalCheck: (state: ClusterState) => boolean;
-  podFailureRules?: Record<string, 'ImagePullError' | 'CrashLoopBackOff'>;
+  initialState?: () => Partial<Omit<ClusterState, 'tick'>> & Pick<ClusterState, 'pods' | 'replicaSets' | 'deployments' | 'nodes' | 'services' | 'events'>;
+  goalCheck?: (state: ClusterState) => boolean;
+  podFailureRules?: Record<string, 'ImagePullError' | 'CrashLoopBackOff' | 'OOMKilled'>;
   afterTick?: (tick: number, state: ClusterState) => ClusterState;
   steps?: LessonStep[];
   lecture: {
     sections: LectureSection[];
   };
   quiz: QuizQuestion[];
+}
+
+export interface CurriculumSection {
+  id: string;
+  title: string;
+  description: string;
+  lessons: Lesson[];
 }

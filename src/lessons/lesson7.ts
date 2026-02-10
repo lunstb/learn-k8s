@@ -6,6 +6,7 @@ export const lesson7: Lesson = {
   title: 'Debugging Failures',
   description:
     'Learn to diagnose and fix the two most common pod failures: ImagePullError and CrashLoopBackOff.',
+  mode: 'full',
   goalDescription:
     'Trigger an ImagePullError by deploying a typo image, diagnose and fix it, then trigger CrashLoopBackOff and fix that too.',
   successMessage:
@@ -95,57 +96,56 @@ export const lesson7: Lesson = {
   },
   quiz: [
     {
-      question: 'A pod is stuck in Pending with reason ImagePullError. What\'s the most likely cause?',
+      question:
+        'A pod shows status "Running" but you notice restartCount is 47 and climbing. What is most likely happening?',
       choices: [
-        'The node ran out of memory',
-        'The image name has a typo or the image doesn\'t exist',
-        'The pod has too many containers',
-        'The cluster is full',
+        'The pod is healthy -- restartCount is just a cumulative counter from previous deployments',
+        'The container is in a CrashLoopBackOff cycle -- it starts, crashes, and Kubernetes restarts it repeatedly',
+        'The node is unstable and keeps rebooting, causing all pods on it to restart',
+        'A liveness probe is misconfigured and killing an otherwise healthy container',
       ],
       correctIndex: 1,
       explanation:
-        'ImagePullError means the container runtime couldn\'t download the image. ' +
-        'Check for typos in the image name, missing tags, or missing registry credentials.',
+        'A pod can briefly show "Running" between crashes during CrashLoopBackOff. The status alternates between Running and CrashLoopBackOff as Kubernetes restarts the container with exponential backoff delays (10s, 20s, 40s, up to 5min). A restartCount of 47 means the container has crashed 47 times. Option D is plausible but would typically show in events as "Unhealthy" warnings -- the high restartCount with no liveness probe events points to the app itself crashing.',
     },
     {
-      question: 'What does CrashLoopBackOff mean?',
+      question:
+        'You run "kubectl set image deployment/api nginx:2.1" but the rollout stalls. Events show ImagePullError on the new pods. What is happening to production traffic right now?',
       choices: [
-        'The pod is waiting for a dependency',
-        'The container starts but crashes repeatedly, with increasing restart delays',
-        'The pod can\'t be scheduled',
-        'The network is down',
+        'Traffic is being dropped because the deployment is in a failed state',
+        'Traffic is being routed to the new broken pods, causing 500 errors',
+        'Traffic continues flowing to the old pods -- they are still running and serving requests',
+        'The Service automatically removes all endpoints until the rollout completes',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
-        'CrashLoopBackOff means the container starts, crashes, restarts, crashes again. ' +
-        'Kubernetes increases the delay between restarts (exponential backoff). ' +
-        'Check application logs for the crash cause.',
+        'This is the key safety property of rolling updates: old pods are NOT removed until new pods are Ready. Since the new pods have ImagePullError, they never become Ready, so the old ReplicaSet keeps its pods and the Service continues routing to them. Your users experience zero downtime from a bad image push. The rollout simply stalls until you fix the image name.',
     },
     {
-      question: 'What\'s the first command you should run when debugging pod issues?',
+      question:
+        'A pod has been in ImagePullBackOff for 20 minutes. You fix the image tag with "kubectl set image". What do you expect to happen next?',
       choices: [
-        'kubectl delete pod',
-        'kubectl get pods (to see status of all pods)',
-        'kubectl restart cluster',
-        'kubectl scale deployment --replicas=0',
+        'Nothing -- you need to delete the stuck pods manually before Kubernetes will create new ones',
+        'The deployment controller detects the spec change, creates a new ReplicaSet with the corrected image, and resumes the rolling update',
+        'You must run "kubectl rollout restart" to force Kubernetes to retry the image pull',
+        'The existing pods will automatically update their image in-place without restarting',
       ],
       correctIndex: 1,
       explanation:
-        'Start with kubectl get pods to see which pods are in unhealthy states ' +
-        '(Pending, CrashLoopBackOff, Failed). Then drill into specific pods with describe.',
+        'When you change the pod template spec (including the image), the Deployment controller creates a new ReplicaSet. The old stuck pods belong to the previous ReplicaSet. The new ReplicaSet creates fresh pods with the correct image. You do not need to manually delete pods or force a rollout -- the declarative model handles it. The rolling update resumes automatically with the corrected configuration.',
     },
     {
-      question: 'During a rolling update, new pods fail with ImagePullError. What happens to the old pods?',
+      question:
+        'You see this event: "Back-off restarting failed container." The pod shows CrashLoopBackOff. You run "kubectl logs" and see a Python traceback with "ModuleNotFoundError". What is the root cause?',
       choices: [
-        'They\'re immediately deleted',
-        'They keep running -- the rollout stalls but the app stays up',
-        'They restart',
-        'They switch to the new image',
+        'The container image is correct but the application code has a missing dependency -- this is an application-level bug, not a Kubernetes issue',
+        'The image was pulled from the wrong registry and is missing Python modules',
+        'Kubernetes failed to mount the required ConfigMap containing the Python module',
+        'The pod needs more memory allocated to install Python dependencies at startup',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
-        'Rolling updates are designed to be safe. If new pods fail, old pods continue serving traffic. ' +
-        'The rollout pauses until the issue is fixed.',
+        'CrashLoopBackOff means the image pulled successfully but the process exits on startup. A "ModuleNotFoundError" is a Python import error -- the application code references a library not installed in the container image. This is an application/build issue, not a Kubernetes infrastructure problem. The fix is to rebuild the image with the missing dependency. This distinction matters: ImagePullError = Kubernetes cannot fetch the image; CrashLoopBackOff = the image runs but the process crashes.',
     },
   ],
   podFailureRules: {

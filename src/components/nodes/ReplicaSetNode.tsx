@@ -7,12 +7,15 @@ interface ReplicaSetNodeData {
   image: string;
   isConverged: boolean;
   isOld: boolean;
+  selected?: boolean;
+  kind: string;
+  uid: string;
 }
 
 export function ReplicaSetNode({ data }: { data: ReplicaSetNodeData }) {
   return (
     <div
-      className={`k8s-node replicaset-node ${data.isConverged ? 'converged' : 'converging'} ${data.isOld ? 'old-rs' : ''}`}
+      className={`k8s-node replicaset-node ${data.isConverged ? 'converged' : 'converging'} ${data.isOld ? 'old-rs' : ''} ${data.selected ? 'selected' : ''}`}
     >
       <Handle type="target" position={Position.Top} />
       <div className="node-header">

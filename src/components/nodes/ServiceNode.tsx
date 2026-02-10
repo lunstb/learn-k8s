@@ -6,6 +6,9 @@ interface ServiceNodeData {
   port: number;
   endpointCount: number;
   endpoints: string[];
+  selected?: boolean;
+  kind: string;
+  uid: string;
 }
 
 export function ServiceNode({ data }: { data: ServiceNodeData }) {
@@ -14,7 +17,7 @@ export function ServiceNode({ data }: { data: ServiceNodeData }) {
 
   return (
     <div
-      className={`k8s-node service-node ${hasEndpoints ? '' : 'no-endpoints'}`}
+      className={`k8s-node service-node ${hasEndpoints ? '' : 'no-endpoints'} ${data.selected ? 'selected' : ''}`}
       style={{ borderColor: color }}
     >
       <div className="node-header">

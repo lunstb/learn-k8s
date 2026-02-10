@@ -4,6 +4,7 @@ import { Terminal } from './components/Terminal';
 import { Controls } from './components/Controls';
 import { LessonPanel } from './components/LessonPanel';
 import { EventLog } from './components/EventLog';
+import { ResourceDetailPanel } from './components/ResourceDetailPanel';
 
 import { LessonContent } from './components/LessonContent';
 import { useSimulatorStore } from './simulation/store';
@@ -33,6 +34,7 @@ function App() {
               <>
                 <div className="visualization-panel">
                   <ClusterVisualization />
+                  <ResourceDetailPanel />
                 </div>
                 <div className="bottom-panel">
                   <Controls />

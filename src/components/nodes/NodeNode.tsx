@@ -5,6 +5,9 @@ interface NodeNodeData {
   capacity: number;
   allocated: number;
   isReady: boolean;
+  selected?: boolean;
+  kind: string;
+  uid: string;
 }
 
 export function NodeNode({ data }: { data: NodeNodeData }) {
@@ -12,7 +15,7 @@ export function NodeNode({ data }: { data: NodeNodeData }) {
 
   return (
     <div
-      className={`k8s-node infra-node ${data.isReady ? '' : 'node-not-ready'}`}
+      className={`k8s-node infra-node ${data.isReady ? '' : 'node-not-ready'} ${data.selected ? 'selected' : ''}`}
       style={{ borderColor: color }}
     >
       <Handle type="target" position={Position.Top} />

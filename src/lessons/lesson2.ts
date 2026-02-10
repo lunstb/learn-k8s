@@ -5,6 +5,7 @@ export const lesson2: Lesson = {
   title: 'Pods',
   description:
     'Learn what pods are, how they move through lifecycle phases, and why managed pods beat standalone ones.',
+  mode: 'full',
   goalDescription:
     'Create a standalone pod and delete it. Then create a Deployment and see self-healing when you delete a managed pod.',
   successMessage:
@@ -90,56 +91,65 @@ export const lesson2: Lesson = {
   },
   quiz: [
     {
-      question: 'What happens when you delete a standalone pod?',
+      question:
+        'A pod is in CrashLoopBackOff. A teammate says "the pod isn\'t running." Is that accurate?',
       choices: [
-        'It restarts automatically',
-        'It\'s gone forever — no controller replaces it',
-        'It moves to another node',
-        'An error occurs',
+        'Yes — CrashLoopBackOff means the pod is in Failed phase and has stopped completely',
+        'No — the pod phase is still Running; CrashLoopBackOff means the container inside keeps crashing and restarting with increasing backoff delays',
+        'No — CrashLoopBackOff is not a real Kubernetes status',
+        'Yes — the pod alternates between Pending and Failed but is never Running',
       ],
       correctIndex: 1,
       explanation:
-        'Standalone pods have no owner controller. When deleted, nothing notices they\'re gone ' +
-        'and nothing creates a replacement.',
+        'This is a common source of confusion. The pod\'s phase remains "Running" because Kubernetes keeps trying to restart the container. ' +
+        'CrashLoopBackOff is a container-level status, not a pod phase. The kubelet restarts the container with exponentially increasing delays ' +
+        '(10s, 20s, 40s... up to 5 minutes). The pod is scheduled and "running" from Kubernetes\' perspective — it\'s the container inside that keeps failing.',
     },
     {
-      question: 'Which pod phase means "accepted by the cluster but not yet running"?',
+      question:
+        'You delete a Deployment. What happens to its ReplicaSet and pods?',
       choices: [
-        'Running',
-        'Pending',
-        'Succeeded',
-        'Terminating',
+        'The ReplicaSet and pods continue running as standalone resources',
+        'The pods are deleted but the ReplicaSet remains as an orphan',
+        'Only the Deployment object is removed; you must manually delete the ReplicaSet and pods',
+        'Cascade deletion removes the ReplicaSet, which in turn removes all its pods — the entire ownership chain is cleaned up',
+      ],
+      correctIndex: 3,
+      explanation:
+        'Owner references create a deletion chain. When you delete a Deployment, Kubernetes\' garbage collector follows the ownerReference on the ReplicaSet and deletes it too. ' +
+        'The ReplicaSet\'s deletion triggers garbage collection of its owned pods. This cascade is automatic by default. ' +
+        'You can opt out with --cascade=orphan, which deletes only the Deployment and leaves the RS and pods running as unmanaged resources.',
+    },
+    {
+      question:
+        'You have a standalone pod named "debug-pod" and a Deployment with 2 replicas. You run "kubectl delete pod debug-pod" and then "kubectl delete pod" on one of the Deployment\'s pods. What is the final state?',
+      choices: [
+        'debug-pod is gone permanently; the managed pod is replaced — you end up with 0 standalone pods and 2 managed pods',
+        'Both pods are gone permanently — you end up with 0 standalone pods and 1 managed pod',
+        'Both pods are restarted — you end up with 1 standalone pod and 2 managed pods',
+        'Neither pod can be deleted because Kubernetes protects all running pods',
+      ],
+      correctIndex: 0,
+      explanation:
+        'This is the critical difference between standalone and managed pods. The standalone pod has no ownerReference — no controller is watching it, so deletion is permanent. ' +
+        'The managed pod has an ownerReference pointing to a ReplicaSet. When deleted, the RS detects actual(1) < desired(2) and creates a replacement. ' +
+        'The replacement is a brand-new pod with a new name and IP — it is not the old pod "restarting."',
+    },
+    {
+      question:
+        'A pod has ownerReference pointing to ReplicaSet "web-rs". Someone deletes "web-rs" directly (not through its parent Deployment). What happens to the pod?',
+      choices: [
+        'The pod is immediately terminated because its owner is gone',
+        'The pod keeps running but becomes a standalone pod — with no controller watching it, it will not be replaced if it fails later',
+        'The pod automatically attaches to another ReplicaSet in the same namespace',
+        'Kubernetes prevents you from deleting a ReplicaSet that still has running pods',
       ],
       correctIndex: 1,
       explanation:
-        'Pending means the pod has been accepted but the container(s) haven\'t started yet. ' +
-        'This could be due to waiting for scheduling, image pulling, or resource availability.',
-    },
-    {
-      question: 'Why should you almost never create pods directly in production?',
-      choices: [
-        'Pods are slower than containers',
-        'Direct pods can\'t use networking',
-        'Direct pods aren\'t replaced if they fail',
-        'Pods require special permissions',
-      ],
-      correctIndex: 2,
-      explanation:
-        'If a standalone pod fails or is deleted, nothing replaces it. Use a Deployment ' +
-        '(which manages a ReplicaSet, which manages pods) so you get automatic self-healing.',
-    },
-    {
-      question: 'A Deployment has 2 Running pods. You delete one. What happens?',
-      choices: [
-        'The Deployment scales down to 1',
-        'The ReplicaSet creates a replacement pod',
-        'The deleted pod restarts',
-        'Nothing — you can\'t delete managed pods',
-      ],
-      correctIndex: 1,
-      explanation:
-        'The RS detects actual(1) < desired(2) and creates a new pod. This is self-healing in action — ' +
-        'the control loop automatically reconciles.',
+        'Garbage collection deletes the pod because of the ownerReference — but only if the default cascade policy applies to the RS deletion. ' +
+        'However, if you delete the RS with --cascade=orphan (or if the Deployment recreates a new RS that adopts the pod via matching labels), ' +
+        'the behavior changes. The key insight is that owner references are what connect pods to their controllers. Without that link, ' +
+        'a pod is effectively standalone and loses all self-healing guarantees.',
     },
   ],
   initialState: () => {

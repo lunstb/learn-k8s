@@ -1,30 +1,28 @@
 import { Handle, Position } from '@xyflow/react';
 
-interface DeploymentNodeData {
+interface StatefulSetNodeData {
   label: string;
   replicas: number;
   readyReplicas: number;
   image: string;
-  isConverged: boolean;
   selected?: boolean;
   kind: string;
   uid: string;
 }
 
-export function DeploymentNode({ data }: { data: DeploymentNodeData }) {
+export function StatefulSetNode({ data }: { data: StatefulSetNodeData }) {
   return (
-    <div
-      className={`k8s-node deployment-node ${data.isConverged ? 'converged' : 'converging'} ${data.selected ? 'selected' : ''}`}
-    >
+    <div className={`k8s-node statefulset-node ${data.selected ? 'selected' : ''}`}>
+      <Handle type="target" position={Position.Top} />
       <div className="node-header">
-        <span className="node-icon">D</span>
-        <span className="node-kind">Deployment</span>
+        <span className="node-icon" style={{ background: '#10b981' }}>SS</span>
+        <span className="node-kind">StatefulSet</span>
       </div>
       <div className="node-name">{data.label}</div>
       <div className="node-details">
         <div className="node-field">
           <span className="field-label">Replicas:</span>
-          <span className={`field-value ${data.readyReplicas === data.replicas ? '' : 'mismatch'}`}>
+          <span className={`field-value ${data.readyReplicas !== data.replicas ? 'mismatch' : ''}`}>
             {data.readyReplicas}/{data.replicas}
           </span>
         </div>

@@ -1,6 +1,43 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { useSimulatorStore } from '../simulation/store';
 import './LessonContent.css';
+
+function renderLectureContent(content: string): ReactNode[] {
+  const lines = content.split('\n');
+  const blocks: { type: 'prose' | 'code'; text: string }[] = [];
+  let currentLines: string[] = [];
+  let currentType: 'prose' | 'code' | null = null;
+
+  const flush = () => {
+    if (currentType && currentLines.length > 0) {
+      blocks.push({ type: currentType, text: currentLines.join('\n') });
+    }
+    currentLines = [];
+    currentType = null;
+  };
+
+  for (const line of lines) {
+    if (line.trim() === '') {
+      flush();
+      continue;
+    }
+
+    const type = line.startsWith('  ') ? 'code' : 'prose';
+    if (type !== currentType) {
+      flush();
+    }
+    currentType = type;
+    currentLines.push(line);
+  }
+  flush();
+
+  return blocks.map((block, i) => {
+    if (block.type === 'code') {
+      return <pre key={i} className="lecture-code">{block.text}</pre>;
+    }
+    return <p key={i} className="lecture-prose">{block.text}</p>;
+  });
+}
 
 export function LessonContent() {
   const currentLesson = useSimulatorStore((s) => s.currentLesson);
@@ -36,7 +73,7 @@ function LectureView() {
         {currentLesson.lecture.sections.map((section, i) => (
           <div key={i} className="lecture-section">
             <h3>{section.title}</h3>
-            <div className="lecture-section-content">{section.content}</div>
+            <div className="lecture-section-content">{renderLectureContent(section.content)}</div>
             {section.diagram && (
               <pre className="lecture-diagram">{section.diagram}</pre>
             )}
@@ -64,14 +101,56 @@ function QuizView() {
   const submitQuizAnswer = useSimulatorStore((s) => s.submitQuizAnswer);
   const nextQuizQuestion = useSimulatorStore((s) => s.nextQuizQuestion);
   const startPractice = useSimulatorStore((s) => s.startPractice);
+  const completeLectureQuiz = useSimulatorStore((s) => s.completeLectureQuiz);
 
   const [selectedChoice, setSelectedChoice] = useState<number | null>(null);
+
+  const handleSubmit = useCallback(() => {
+    if (selectedChoice === null) return;
+    submitQuizAnswer(selectedChoice);
+  }, [selectedChoice, submitQuizAnswer]);
+
+  const handleNext = useCallback(() => {
+    setSelectedChoice(null);
+    nextQuizQuestion();
+  }, [nextQuizQuestion]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      const numChoices = currentLesson?.quiz[quizIndex]?.choices.length ?? 0;
+
+      // Number keys 1-4 to select choices (only before revealing answer)
+      if (!quizRevealed && e.key >= '1' && e.key <= '4') {
+        const idx = parseInt(e.key) - 1;
+        if (idx < numChoices) {
+          setSelectedChoice(idx);
+        }
+        return;
+      }
+
+      // Enter to submit or advance
+      if (e.key === 'Enter') {
+        if (!quizRevealed && selectedChoice !== null) {
+          handleSubmit();
+        } else if (quizRevealed) {
+          handleNext();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [currentLesson, quizIndex, quizRevealed, selectedChoice, handleSubmit, handleNext]);
 
   if (!currentLesson) return null;
 
   const quiz = currentLesson.quiz;
   const totalQuestions = quiz.length;
   const isFinished = quizAnswers.length === totalQuestions;
+  const isLectureQuiz = currentLesson.mode === 'lecture-quiz';
 
   // Show score summary after all questions answered
   if (isFinished) {
@@ -88,11 +167,17 @@ function QuizView() {
               {correctCount}/{totalQuestions}
             </div>
             <div className="quiz-score-label">
-              {percentage >= 75
-                ? "Great understanding! You're ready for hands-on practice."
-                : percentage >= 50
-                ? 'Good effort! The practice section will help reinforce these concepts.'
-                : "Don't worry -- the practice section will help solidify these concepts."}
+              {isLectureQuiz
+                ? (percentage >= 75
+                    ? "Great understanding! You've completed this lesson."
+                    : percentage >= 50
+                    ? 'Good effort! Review the lecture to strengthen your understanding.'
+                    : "Don't worry -- review the lecture and try again to solidify these concepts.")
+                : (percentage >= 75
+                    ? "Great understanding! You're ready for hands-on practice."
+                    : percentage >= 50
+                    ? 'Good effort! The practice section will help reinforce these concepts.'
+                    : "Don't worry -- the practice section will help solidify these concepts.")}
             </div>
 
             <div className="quiz-progress-bar" style={{ justifyContent: 'center', marginBottom: 24 }}>
@@ -104,9 +189,15 @@ function QuizView() {
               ))}
             </div>
 
-            <button className="btn-start-practice" onClick={startPractice}>
-              Start Practice &rarr;
-            </button>
+            {isLectureQuiz ? (
+              <button className="btn-start-practice" onClick={completeLectureQuiz}>
+                Complete Lesson &#10003;
+              </button>
+            ) : (
+              <button className="btn-start-practice" onClick={startPractice}>
+                Start Practice &rarr;
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -114,16 +205,6 @@ function QuizView() {
   }
 
   const question = quiz[quizIndex];
-
-  const handleSubmit = () => {
-    if (selectedChoice === null) return;
-    submitQuizAnswer(selectedChoice);
-  };
-
-  const handleNext = () => {
-    setSelectedChoice(null);
-    nextQuizQuestion();
-  };
 
   return (
     <div className="lesson-content">
@@ -168,6 +249,7 @@ function QuizView() {
                   onChange={() => !quizRevealed && setSelectedChoice(i)}
                   disabled={quizRevealed}
                 />
+                <span className="quiz-choice-key">{i + 1}</span>
                 {choice}
               </label>
             );

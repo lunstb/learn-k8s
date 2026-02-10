@@ -6,6 +6,7 @@ export const lesson6: Lesson = {
   title: 'Nodes and Scheduling',
   description:
     'Pods run on nodes. The scheduler assigns Pending pods to nodes with capacity, and you control placement with cordon and uncordon.',
+  mode: 'full',
   goalDescription:
     'Cordon a node, observe pod eviction and rescheduling, then uncordon to restore the cluster.',
   successMessage:
@@ -103,57 +104,67 @@ export const lesson6: Lesson = {
   },
   quiz: [
     {
-      question: 'What does "cordoning" a node do?',
+      question:
+        'You cordon node-2 to prepare for maintenance. What happens to the 4 pods currently running on node-2?',
       choices: [
-        'Deletes the node from the cluster',
-        'Prevents new pods from being scheduled on it',
-        'Evicts all running pods immediately',
-        'Shuts down the node',
+        'All 4 pods are immediately evicted and rescheduled to other nodes',
+        'The pods are gracefully terminated one at a time over the next 5 minutes',
+        'Nothing — the 4 pods continue running; cordon only prevents NEW pods from being scheduled there',
+        'The pods enter Pending state until the node is uncordoned',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
-        'Cordoning marks a node as unschedulable. Existing pods continue running, but the scheduler ' +
-        'won\'t place new pods there.',
+        'This is one of the most common misconceptions about cordon. Cordoning only sets the node as unschedulable — it does NOT evict existing pods. ' +
+        'Your 4 pods continue running normally. If you need to remove pods from the node, you must use "kubectl drain," which cordons the node AND evicts all pods. ' +
+        'Cordon is useful when you want to stop the bleeding (no more pods go here) while you plan the drain.',
     },
     {
       question:
-        'A cluster has 3 nodes with capacity 3 each. All nodes are Ready with 2 pods each. Where does a new pod get scheduled?',
+        'You drained node-3, and its pods were rescheduled to node-1 and node-2. After maintenance, you uncordon node-3. Do the pods move back?',
       choices: [
-        'The node with the most pods',
-        'The node with the fewest pods (least loaded)',
-        'A random node',
-        'It can\'t be scheduled',
+        'Yes — Kubernetes automatically rebalances pods across all available nodes',
+        'Yes — but only after a 5-minute stabilization period',
+        'No — Kubernetes does not rebalance existing pods; node-3 stays empty until new pods are created or a manual intervention occurs',
+        'No — uncordoning has no effect; you must delete and recreate the node',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
-        'The scheduler picks the least-loaded eligible node. Since all have 2 pods, it picks the first ' +
-        'available with capacity.',
-    },
-    {
-      question: 'What happens when a node becomes NotReady?',
-      choices: [
-        'Its pods keep running normally',
-        'Its pods are evicted (marked Failed) and controllers create replacements',
-        'The cluster pauses until the node recovers',
-        'All pods in the cluster restart',
-      ],
-      correctIndex: 1,
-      explanation:
-        'NotReady triggers pod eviction. The node lifecycle controller marks pods as Failed, then ReplicaSet ' +
-        'controllers create replacements that get scheduled to healthy nodes.',
+        'Kubernetes does NOT rebalance running pods. Uncordoning makes the node eligible for future scheduling, but existing pods on other nodes are not moved. ' +
+        'Node-3 will remain empty until new pods are created (by scaling up, rolling updates, or pod failures triggering replacements). ' +
+        'If you want immediate rebalancing, you would need to use a tool like "kubectl rollout restart" to trigger new pod creation, ' +
+        'or use the descheduler (a separate project) to evict pods for rescheduling.',
     },
     {
       question:
-        'You drain node-3 (capacity 3, running 2 pods). The other 2 nodes have 2 pods each (capacity 3). What happens?',
+        'A cluster has 3 nodes with capacity 3 each, running 9 total pods (3 per node). Node-1 fails and becomes NotReady. Its 3 pods are evicted. What happens next?',
       choices: [
-        'The 2 evicted pods become Unschedulable',
-        'Both evicted pods are rescheduled to the other nodes',
-        'Only 1 pod can be rescheduled',
-        'The drain fails',
+        'All 3 replacement pods are scheduled to node-2 and node-3 immediately',
+        'The ReplicaSet reduces its desired count to 6 to match available capacity',
+        'Kubernetes automatically increases node-2 and node-3 capacity to accommodate the extra pods',
+        'The RS creates 3 replacement pods, but they remain Pending because node-2 and node-3 are already at full capacity (3/3 each)',
+      ],
+      correctIndex: 3,
+      explanation:
+        'The ReplicaSet does not know or care about node capacity — it always creates enough pods to match the desired count. But the scheduler cannot place them: ' +
+        'node-2 and node-3 each have 3 pods already (full capacity). The 3 replacement pods stay Pending with reason "Unschedulable." ' +
+        'They will remain Pending until capacity opens up — either node-1 recovers, a new node is added, or existing pods are removed from other nodes. ' +
+        'The desired count is NEVER automatically reduced; the controller faithfully maintains what you declared.',
+    },
+    {
+      question:
+        'Two nodes have equal available capacity. Node-1 is in zone-a and node-2 is in zone-b. A new pod has no node affinity or zone preferences. Which node does the scheduler pick?',
+      choices: [
+        'Always node-1 because it has a lower node number',
+        'The scheduler picks based on a scoring algorithm that considers factors like spreading pods across nodes, but with equal scores either node could be chosen',
+        'The pod stays Pending because the scheduler cannot break ties',
+        'The scheduler always places pods in zone-a first, then zone-b',
       ],
       correctIndex: 1,
       explanation:
-        'Each remaining node has 1 free slot (capacity 3, allocated 2). The 2 evicted pods fit — one on each node.',
+        'The Kubernetes scheduler uses a two-phase approach: filtering (eliminate ineligible nodes) then scoring (rank the remaining ones). ' +
+        'Scoring considers many factors including resource balance, pod spreading across topology zones, and affinity rules. ' +
+        'With no preferences set and truly equal conditions, the scheduler uses its internal scoring algorithm to pick — there is no simple alphabetical or numbered ordering. ' +
+        'In practice, you can influence placement with nodeAffinity, podAntiAffinity, and topology spread constraints.',
     },
   ],
   initialState: () => {

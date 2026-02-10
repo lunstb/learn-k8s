@@ -6,6 +6,7 @@ export const lesson3: Lesson = {
   title: 'ReplicaSets and Scaling',
   description:
     'Learn how ReplicaSets maintain a desired pod count and how scaling works declaratively.',
+  mode: 'full',
   goalDescription:
     'Scale the Deployment to 5 replicas, then back to 2.',
   successMessage:
@@ -96,52 +97,64 @@ export const lesson3: Lesson = {
   },
   quiz: [
     {
-      question: 'How does a ReplicaSet know which pods it manages?',
+      question:
+        'A ReplicaSet has selector app=web and replicas=3, with 3 Running pods. You manually create a new pod with label app=web. What happens?',
       choices: [
-        'By pod name prefix',
-        'By label selectors matching pod labels',
-        'By tracking pod creation order',
-        'By IP address',
+        'The RS now sees 4 pods matching its selector but only wants 3, so it terminates one pod to reconcile',
+        'The RS ignores the manually created pod because it didn\'t create it',
+        'The RS adopts the pod and increases its desired count to 4',
+        'The new pod is rejected by the API server because the label is already in use',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
-        'ReplicaSets use label selectors to match pods. Any pod with matching labels is counted, regardless of how it was created.',
+        'ReplicaSets use label selectors, not ownership records, to count pods. Any pod matching the selector is counted regardless of who created it. ' +
+        'With 4 matching pods and a desired count of 3, the RS sees an excess and deletes one. It might even delete your manually created pod — or one of the originals. ' +
+        'This is why manually creating pods with labels matching a controller\'s selector is dangerous and unpredictable.',
     },
     {
-      question: 'You have 2 pods running and scale to 5. How many new pods does the RS create?',
+      question:
+        'You scale a Deployment from 5 to 2 replicas. Which pods does Kubernetes terminate?',
       choices: [
-        '5 (replaces all)',
-        '3 (the difference)',
-        '7 (adds 5 to existing 2)',
-        '1 (scales incrementally)',
+        'The 3 oldest pods, preserving the newest ones that are most likely running updated code',
+        'A random selection of 3 pods',
+        'The 3 newest pods, preserving the oldest long-running pods that have proven stable',
+        'It terminates all 5 and recreates 2 fresh pods',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
-        'The controller computes the diff: 5 desired - 2 existing = 3 new pods. It never destroys and recreates everything.',
+        'Kubernetes terminates the most recently created pods first when scaling down. The reasoning is that older pods have been running longer and are proven stable, ' +
+        'while newer pods have had less time to demonstrate reliability. This also minimizes disruption — the newest pods have likely received the least traffic and built up the least in-memory state. ' +
+        'Note: this is the default behavior; pod disruption budgets and other factors can influence the exact selection.',
     },
     {
-      question: 'When scaling down, which pods are terminated first?',
+      question:
+        'You have a bare ReplicaSet (no Deployment) running 3 pods with image nginx:1.0. You update the RS template to nginx:2.0. What happens to the existing pods?',
       choices: [
-        'The oldest pods',
-        'The newest pods',
-        'Random selection',
-        'Pods on the busiest node',
+        'All 3 pods are immediately updated to nginx:2.0 in-place',
+        'The RS performs a rolling update, replacing pods one at a time',
+        'Nothing — existing pods keep running nginx:1.0; only newly created pods will use nginx:2.0',
+        'The RS deletes all pods and recreates them with nginx:2.0',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
-        'Kubernetes terminates the most recently created pods first when scaling down. This preserves long-running, established pods.',
+        'This is exactly why Deployments exist. A ReplicaSet only cares about pod count, not pod content. Changing the template affects future pods, ' +
+        'but existing pods are immutable and remain unchanged. To actually roll out a new image, you need a Deployment, which creates a new ReplicaSet ' +
+        'with the updated template and orchestrates a gradual transition. With a bare RS, you\'d have to manually delete old pods to trigger replacements with the new template.',
     },
     {
-      question: 'Why are Deployments preferred over bare ReplicaSets?',
+      question:
+        'A ReplicaSet has selector app=api, version=v2. A pod has labels app=api, version=v1. Does the RS manage this pod?',
       choices: [
-        'Deployments are faster',
-        'Deployments add rolling update and rollback capabilities',
-        'ReplicaSets can\'t scale',
-        'Deployments use fewer resources',
+        'Yes — the app=api label matches, which is sufficient',
+        'No — but only because the pod was created before the ReplicaSet',
+        'Yes — Kubernetes matches on any overlapping label',
+        'No — the selector requires ALL specified labels to match, and version=v1 does not equal version=v2',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
-        'Deployments manage ReplicaSets and add rolling updates, revision history, and rollback capability. A bare RS can only maintain pod count.',
+        'Label selectors require ALL key-value pairs to match. The selector {app=api, version=v2} matches only pods that have both app=api AND version=v2. ' +
+        'A pod with version=v1 does not satisfy the selector, even though app=api matches. This AND logic is how Deployments use the pod-template-hash label ' +
+        'to ensure each ReplicaSet only counts pods from its own template, even when multiple ReplicaSets share the same app label.',
     },
   ],
   initialState: () => {

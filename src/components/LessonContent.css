@@ -53,7 +53,27 @@
   font-size: 0.9rem;
   line-height: 1.7;
   color: #cbd5e1;
-  white-space: pre-line;
+}
+
+.lecture-prose {
+  margin: 0 0 12px;
+}
+
+.lecture-prose:last-child {
+  margin-bottom: 0;
+}
+
+.lecture-code {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 8px 0 12px;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #e2e8f0;
 }
 
 .lecture-diagram {
@@ -229,6 +249,26 @@
 .quiz-choice input[type="radio"] {
   accent-color: #3b82f6;
   flex-shrink: 0;
+}
+
+.quiz-choice-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: #334155;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  flex-shrink: 0;
+}
+
+.quiz-choice.selected .quiz-choice-key {
+  background: #3b82f6;
+  color: white;
 }
 
 .quiz-explanation {

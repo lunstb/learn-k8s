@@ -7,6 +7,9 @@ interface PodNodeData {
   isNew: boolean;
   reason?: string;
   restartCount?: number;
+  selected?: boolean;
+  kind: string;
+  uid: string;
 }
 
 const statusColors: Record<string, string> = {
@@ -28,7 +31,7 @@ export function PodNode({ data }: { data: PodNodeData }) {
 
   return (
     <div
-      className={`k8s-node pod-node ${data.isNew ? 'node-new' : ''} ${isCrashing ? 'pod-crashing' : ''} ${isImageError ? 'pod-image-error' : ''}`}
+      className={`k8s-node pod-node ${data.isNew ? 'node-new' : ''} ${isCrashing ? 'pod-crashing' : ''} ${isImageError ? 'pod-image-error' : ''} ${data.selected ? 'selected' : ''}`}
       style={{ borderColor: color }}
     >
       <Handle type="target" position={Position.Top} />

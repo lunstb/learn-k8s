@@ -6,6 +6,7 @@ export const lesson5: Lesson = {
   title: 'Services and Networking',
   description:
     'Services provide a stable address for ephemeral pods, routing traffic only to healthy endpoints.',
+  mode: 'full',
   goalDescription:
     'Create a Service, observe its endpoints, then scale to 5 and verify endpoints update.',
   successMessage:
@@ -94,52 +95,66 @@ export const lesson5: Lesson = {
   },
   quiz: [
     {
-      question: 'Why do Kubernetes applications need Services?',
+      question:
+        'Your pods have label app=api but the Service selector is app=API (capital letters). How many endpoints does the Service have?',
       choices: [
-        'Pods can\'t communicate without them',
-        'Pod IPs change when pods restart, so you need a stable address',
-        'Services make pods run faster',
-        'Services are required to create pods',
+        'All the Running pods — Kubernetes label matching is case-insensitive',
+        'Zero — Kubernetes labels are case-sensitive, so app=API does not match app=api',
+        'It depends on the Service type (ClusterIP vs NodePort)',
+        'The Service creation fails because "API" is not a valid label value',
       ],
       correctIndex: 1,
       explanation:
-        'Pods are ephemeral — when they restart, they get new IPs. A Service provides a stable DNS name ' +
-        'and IP, routing to whatever pods currently match its selector.',
+        'Kubernetes labels are strictly case-sensitive. "api" and "API" are different values. The Service selector app=API will not match pods with app=api, ' +
+        'resulting in zero endpoints. This is a common and frustrating debugging scenario — the Service exists and looks correct, but no traffic reaches your pods. ' +
+        'Always check exact label values with "kubectl get pods --show-labels" when a Service has no endpoints.',
     },
     {
       question:
-        'A Service has selector app=web. There are 3 Running and 2 Pending pods with label app=web. How many endpoints?',
-      choices: ['5', '3', '2', '0'],
+        'You have 5 pods with label app=web. Three are Running, one is Pending, and one is Terminating. A Service selects app=web. During this moment, how many endpoints does the Service have?',
+      choices: [
+        '5 — all pods matching the selector are endpoints',
+        '3 — only Running pods become endpoints; Pending and Terminating pods are excluded',
+        '4 — only the Terminating pod is excluded',
+        '1 — Kubernetes picks only the healthiest pod',
+      ],
       correctIndex: 1,
       explanation:
-        'Only Running pods become endpoints. The 2 Pending pods are excluded because they are not yet serving traffic.',
+        'The endpoints controller filters on two criteria: the pod must match the Service selector AND the pod must be in the Running phase. ' +
+        'Pending pods are not ready to accept traffic (containers may still be starting). Terminating pods are shutting down and will soon be gone. ' +
+        'Only the 3 Running pods are registered as endpoints. This automatic filtering is what prevents traffic from being sent to pods that cannot handle it.',
     },
     {
       question:
-        'You scale a Deployment from 3 to 5 replicas. What happens to the Service endpoints?',
+        'A NodePort Service is exposed on port 31000. You have 3 nodes and 2 pods running on node-1. A client sends a request to node-2:31000. What happens?',
       choices: [
-        'Endpoints stay at 3 until manually updated',
-        'Endpoints automatically increase to 5 once new pods are Running',
-        'The Service must be recreated',
-        'Endpoints decrease during scaling',
+        'The request fails because no pods are running on node-2',
+        'The request is queued until a pod is scheduled on node-2',
+        'NodePort only works on nodes that are running matching pods',
+        'The request is routed to one of the pods on node-1 — NodePort forwards traffic from any node to any matching endpoint in the cluster',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
-        'The endpoints controller continuously reconciles. As new pods reach Running status, ' +
-        'they automatically become endpoints.',
+        'NodePort exposes the Service on the same port across ALL nodes, regardless of where the pods actually run. ' +
+        'kube-proxy on each node handles the forwarding. When node-2 receives the request on port 31000, it routes it to one of the Running endpoints — ' +
+        'which happen to be on node-1. This is why NodePort uses the range 30000-32767: these ports are reserved on every node for Service traffic. ' +
+        'The client can connect to any node and reach the Service.',
     },
     {
-      question: 'What happens to Service endpoints during a rolling update?',
+      question:
+        'You create a ClusterIP Service for your frontend pods, but external users on the internet cannot reach it. Why?',
       choices: [
-        'All endpoints are removed during the update',
-        'Old pod endpoints are replaced by new pod endpoints as the rollout progresses',
-        'Endpoints double during the update',
-        'The Service stops working',
+        'ClusterIP Services are only accessible from within the cluster — use NodePort or LoadBalancer for external access',
+        'ClusterIP requires a DNS entry to be manually created first',
+        'Frontend pods cannot be exposed through Services',
+        'ClusterIP is deprecated; you should use Ingress instead',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
-        'During a rolling update, old Running pods are still endpoints until they terminate. ' +
-        'New pods become endpoints when they reach Running. Traffic is served throughout.',
+        'ClusterIP is the default Service type and only assigns an internal virtual IP. It is intended for pod-to-pod communication within the cluster ' +
+        '(e.g., your frontend talking to your backend API). For external traffic, you need NodePort (exposes on every node\'s IP at a static port) ' +
+        'or LoadBalancer (provisions a cloud load balancer with an external IP). Ingress is a separate resource that routes HTTP traffic but typically still ' +
+        'requires a LoadBalancer or NodePort Service behind it.',
     },
   ],
   initialState: () => {

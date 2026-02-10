@@ -24,17 +24,93 @@ const RESOURCE_ALIASES: Record<string, string> = {
   service: 'service',
   services: 'service',
   svc: 'service',
+  namespace: 'namespace',
+  namespaces: 'namespace',
+  ns: 'namespace',
+  configmap: 'configmap',
+  configmaps: 'configmap',
+  cm: 'configmap',
+  secret: 'secret',
+  secrets: 'secret',
+  ingress: 'ingress',
+  ingresses: 'ingress',
+  ing: 'ingress',
+  statefulset: 'statefulset',
+  statefulsets: 'statefulset',
+  sts: 'statefulset',
+  daemonset: 'daemonset',
+  daemonsets: 'daemonset',
+  ds: 'daemonset',
+  job: 'job',
+  jobs: 'job',
+  cronjob: 'cronjob',
+  cronjobs: 'cronjob',
+  cj: 'cronjob',
+  horizontalpodautoscaler: 'hpa',
+  horizontalpodautoscalers: 'hpa',
+  hpa: 'hpa',
+  hpas: 'hpa',
 };
 
 export function parseCommand(input: string): ParsedCommand | { error: string } {
   const trimmed = input.trim();
   if (!trimmed) return { error: 'No command entered.' };
 
-  // Remove leading "kubectl" if present
   const parts = trimmed.split(/\s+/);
   let idx = 0;
+
+  // Remove leading "kubectl" if present
   if (parts[idx] === 'kubectl') {
     idx++;
+  }
+
+  // Handle "helm" commands
+  if (parts[idx] === 'helm') {
+    idx++;
+    if (idx >= parts.length) {
+      return { error: 'Usage: helm install|list|uninstall ...' };
+    }
+    const helmAction = parts[idx].toLowerCase();
+    idx++;
+
+    if (helmAction === 'list' || helmAction === 'ls') {
+      return { action: 'helm-list', resourceType: 'helm', resourceName: '', flags: {} };
+    }
+
+    if (helmAction === 'install') {
+      if (idx >= parts.length) {
+        return { error: 'Usage: helm install <release-name> <chart>' };
+      }
+      const releaseName = parts[idx];
+      idx++;
+      const chart = idx < parts.length && !parts[idx].startsWith('--') ? parts[idx] : 'nginx-chart';
+      if (!parts[idx]?.startsWith('--')) idx++;
+      const flags: Record<string, string> = { chart };
+      while (idx < parts.length) {
+        const part = parts[idx];
+        if (part.startsWith('--')) {
+          const flagPart = part.substring(2);
+          if (flagPart.includes('=')) {
+            const [key, ...rest] = flagPart.split('=');
+            flags[key] = rest.join('=');
+          } else if (idx + 1 < parts.length && !parts[idx + 1].startsWith('--')) {
+            flags[flagPart] = parts[idx + 1];
+            idx++;
+          }
+        }
+        idx++;
+      }
+      return { action: 'helm-install', resourceType: 'helm', resourceName: releaseName, flags };
+    }
+
+    if (helmAction === 'uninstall' || helmAction === 'delete') {
+      if (idx >= parts.length) {
+        return { error: 'Usage: helm uninstall <release-name>' };
+      }
+      return { action: 'helm-uninstall', resourceType: 'helm', resourceName: parts[idx], flags: {} };
+    }
+
+    return { error: `Unknown helm command: "${helmAction}". Supported: install, list, uninstall` };
   }
 
   if (idx >= parts.length) {
@@ -141,9 +217,54 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
     };
   }
 
-  const validActions = ['create', 'get', 'delete', 'scale', 'describe'];
+  // Handle "autoscale" command
+  if (action === 'autoscale') {
+    if (idx >= parts.length) {
+      return { error: 'Usage: kubectl autoscale deployment <name> --min=N --max=N --cpu-percent=N' };
+    }
+    const resourcePart = parts[idx];
+    let resourceType: string;
+    let resourceName: string;
+
+    if (resourcePart.includes('/')) {
+      const [type, name] = resourcePart.split('/');
+      const normalizedType = RESOURCE_ALIASES[type.toLowerCase()];
+      if (!normalizedType) return { error: `Unknown resource type: ${type}` };
+      resourceType = normalizedType;
+      resourceName = name;
+      idx++;
+    } else {
+      const normalizedType = RESOURCE_ALIASES[resourcePart.toLowerCase()];
+      if (!normalizedType) return { error: `Unknown resource type: ${resourcePart}` };
+      resourceType = normalizedType;
+      idx++;
+      if (idx >= parts.length) return { error: 'Missing resource name.' };
+      resourceName = parts[idx];
+      idx++;
+    }
+
+    const flags: Record<string, string> = {};
+    while (idx < parts.length) {
+      const part = parts[idx];
+      if (part.startsWith('--')) {
+        const flagPart = part.substring(2);
+        if (flagPart.includes('=')) {
+          const [key, ...rest] = flagPart.split('=');
+          flags[key] = rest.join('=');
+        } else if (idx + 1 < parts.length && !parts[idx + 1].startsWith('--')) {
+          flags[flagPart] = parts[idx + 1];
+          idx++;
+        }
+      }
+      idx++;
+    }
+
+    return { action: 'autoscale', resourceType, resourceName, flags };
+  }
+
+  const validActions = ['create', 'get', 'delete', 'scale', 'describe', 'apply'];
   if (!validActions.includes(action)) {
-    return { error: `Unknown command: "${action}". Try: create, get, delete, scale, set image, describe, cordon, uncordon` };
+    return { error: `Unknown command: "${action}". Try: create, get, delete, scale, set image, describe, cordon, uncordon, helm` };
   }
 
   // Parse resource type
@@ -151,7 +272,7 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
     if (action === 'get') {
       return { error: 'Usage: kubectl get <resource-type> [name]' };
     }
-    return { error: `Missing resource type. Available: deployment, replicaset, pod, node, service, event` };
+    return { error: `Missing resource type. Available: deployment, replicaset, pod, node, service, event, namespace, configmap, secret, ingress, statefulset, daemonset, job, cronjob, hpa` };
   }
 
   let resourceType: string;
@@ -170,7 +291,7 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
   } else {
     const normalizedType = RESOURCE_ALIASES[resourcePart.toLowerCase()];
     if (!normalizedType) {
-      return { error: `Unknown resource type: "${resourcePart}". Available: deployment (deploy), replicaset (rs), pod (po), node (no), service (svc), event (ev)` };
+      return { error: `Unknown resource type: "${resourcePart}". Available: deployment (deploy), replicaset (rs), pod (po), node (no), service (svc), event (ev), namespace (ns), configmap (cm), secret, ingress (ing), statefulset (sts), daemonset (ds), job, cronjob (cj), hpa` };
     }
     resourceType = normalizedType;
     idx++;
