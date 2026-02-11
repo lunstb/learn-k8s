@@ -46,7 +46,7 @@ export function reconcileJobs(state: ClusterState): ReconcileResult {
     }
 
     // Check if job has exceeded backoff limit
-    if (failed > job.spec.backoffLimit) {
+    if (failed >= job.spec.backoffLimit) {
       job.status = {
         ...job.status,
         succeeded,

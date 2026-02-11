@@ -246,19 +246,18 @@ spec:
     },
     {
       question:
-        'A pod is being terminated. Kubernetes sends SIGTERM to the container. The container has a graceful shutdown handler that takes 45 seconds to drain connections. The default terminationGracePeriodSeconds is 30. What happens?',
+        'During a rolling update, users report brief 502 errors even though new pods are ready before old pods are removed. The application handles SIGTERM correctly with graceful shutdown. What is the most likely cause?',
       choices: [
-        'Kubernetes waits the full 45 seconds because graceful shutdown handlers always run to completion',
-        'After 30 seconds, Kubernetes sends SIGKILL to forcefully stop the container — the remaining 15 seconds of cleanup are lost',
-        'The container is immediately killed with SIGKILL since no explicit grace period override was configured',
-        'Kubernetes detects the active connections and extends the grace period until the drain completes',
+        'The new pods have not passed their readiness probe when traffic is first routed to them',
+        'The kubelet sends SIGKILL immediately without waiting for the grace period to elapse',
+        'The pod receives traffic for a brief window after SIGTERM but before the Service endpoints are updated',
+        'The Deployment controller deletes old pods before creating new ones, causing a capacity gap',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
-        'When a pod is terminated, Kubernetes sends SIGTERM and starts a countdown based on terminationGracePeriodSeconds (default: 30s). ' +
-        'If the container is still running after 30 seconds, Kubernetes sends SIGKILL — an immediate, non-catchable kill signal. ' +
-        'The remaining 15 seconds of the 45-second drain are lost. To fix this, increase terminationGracePeriodSeconds in the pod spec to at least 45. ' +
-        'This is a common production issue: applications with slow shutdown (draining connections, flushing buffers) need a longer grace period.',
+        'This is the endpoint propagation race condition. When a pod is terminated, two things happen in parallel: (1) the kubelet sends SIGTERM, and (2) the endpoints controller removes the pod from Service endpoints. ' +
+        'Because these are asynchronous, there is a brief window where the pod is shutting down but still listed as an endpoint — traffic arrives at a pod that is draining. ' +
+        'The fix is to add a preStop hook with a short sleep (e.g., 5 seconds) to delay SIGTERM until endpoint removal has propagated: preStop: {exec: {command: ["sleep", "5"]}}.',
     },
   ],
   initialState: () => {

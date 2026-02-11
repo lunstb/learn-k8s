@@ -9,10 +9,10 @@ export const lessonResourceLimits: Lesson = {
     'Resource requests and limits tell Kubernetes how much CPU and memory your containers need, affecting scheduling and stability.',
   mode: 'full',
   goalDescription:
-    'Create a Deployment "hungry-app" with image hungry-app:1.0 (which will be OOMKilled), observe the failure, then fix it by changing the image to web-app:1.0. Both "web" and "hungry-app" deployments must be healthy.',
+    'Deploy "hungry-app" with image hungry-app:1.0 and observe pods getting OOMKilled (Out Of Memory). Diagnose the failure using describe, then fix it by switching to a working image (web-app:1.0). Both deployments must be healthy.',
   successMessage:
-    'You observed OOMKilled — the container exceeded its memory limit and was killed by the kernel. ' +
-    'Setting proper resource limits prevents one container from starving others. In production, always set both requests and limits.',
+    'You observed OOMKilled — the container exceeded its memory limit and was terminated by the kernel. ' +
+    'This is why resource limits matter: they prevent one container from consuming all node memory and crashing everything else.',
   hints: [
     { text: 'Start by creating the deployment. Use "kubectl describe pod <name>" after reconciling to see why pods are failing.' },
     { text: 'kubectl create deployment hungry-app --image=hungry-app:1.0', exact: true },

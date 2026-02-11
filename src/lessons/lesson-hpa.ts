@@ -32,7 +32,10 @@ spec:
   goals: [
     {
       description: 'Create an HPA for the "web" Deployment (min=2, max=8, cpu=50%)',
-      check: (s: ClusterState) => s.hpas.some(h => h.spec.scaleTargetRef.name === 'web'),
+      check: (s: ClusterState) => {
+        const h = s.hpas.find(h => h.spec.scaleTargetRef.name === 'web');
+        return !!h && h.spec.minReplicas === 2 && h.spec.maxReplicas === 8 && h.spec.targetCPUUtilizationPercentage === 50;
+      },
     },
     {
       description: 'HPA scales the deployment beyond 2 replicas',

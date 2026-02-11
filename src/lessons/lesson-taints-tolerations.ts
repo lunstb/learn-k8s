@@ -85,8 +85,12 @@ spec:
           'If no other nodes have capacity, pods may still land here.\n\n' +
           'NoExecute: Stronger than NoSchedule — not only prevents new scheduling, but also evicts existing pods ' +
           'that do not have the toleration. Used when a node becomes problematic (e.g., node.kubernetes.io/unreachable).\n\n' +
-          'Kubernetes automatically applies taints to problematic nodes: ' +
-          'node.kubernetes.io/not-ready and node.kubernetes.io/unreachable with NoExecute effect.',
+          'Kubernetes automatically applies taints to problematic nodes:\n' +
+          '- node.kubernetes.io/not-ready:NoExecute and node.kubernetes.io/unreachable:NoExecute — for node health failures\n' +
+          '- node.kubernetes.io/disk-pressure:NoSchedule, node.kubernetes.io/memory-pressure:NoSchedule, ' +
+          'node.kubernetes.io/pid-pressure:NoSchedule — for resource pressure conditions\n\n' +
+          'The NoExecute taints evict existing pods. The NoSchedule resource-pressure taints prevent new pods from being ' +
+          'placed on stressed nodes while letting existing pods continue running.',
         keyTakeaway:
           'Taints (key=value:effect) mark nodes to repel pods. NoSchedule prevents new scheduling. PreferNoSchedule is a soft preference. NoExecute also evicts existing pods.',
       },

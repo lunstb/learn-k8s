@@ -220,6 +220,12 @@ reclaimPolicy: ???`,
           '- **reclaimPolicy**: What to do when the PVC is deleted: `Delete` (remove the PV and underlying storage) or `Retain` (keep the PV for manual cleanup)\n' +
           '- **parameters**: Provider-specific settings (disk type, IOPS, etc.)\n\n' +
           'With dynamic provisioning, you never manually create PVs. You just create PVCs that reference a StorageClass, and the provisioner handles the rest.\n\n' +
+          'Dynamic provisioning can still fail. Common causes: the cloud provider hits a quota or API limit, ' +
+          'the requested access mode is unsupported by the backend (e.g., RWX on an EBS provisioner that only supports RWO), ' +
+          'or the StorageClass parameters specify an unavailable disk type. Check `kubectl describe pvc` for provisioner error events.\n\n' +
+          'StorageClasses also have a **volumeBindingMode**: `Immediate` (provision right away, the default) or ' +
+          '`WaitForFirstConsumer` (delay provisioning until a pod references the PVC). The latter is useful for ' +
+          'topology-aware provisioning — ensuring the disk is created in the same zone as the node running the pod.\n\n' +
           'Many clusters have a **default StorageClass** so PVCs don\'t even need to specify one.',
         keyTakeaway:
           'StorageClasses automate PV creation. The provisioner creates storage on-demand when a PVC references the StorageClass.',
@@ -278,8 +284,8 @@ reclaimPolicy: ???`,
         'Dynamic provisioning can fail for several reasons even when the StorageClass exists: cloud provider quotas or API errors, ' +
         'unsupported access modes (e.g., requesting RWX from an EBS provisioner that only supports RWO), invalid parameters in the StorageClass, ' +
         'or the provisioner pod itself is unhealthy. Check `kubectl describe pvc` for events from the provisioner. ' +
-        'Option D is partially true for some volume binding modes (WaitForFirstConsumer delays provisioning until a pod needs it), ' +
-        'but the default Immediate mode provisions right away.',
+        'Option C is partially true — WaitForFirstConsumer delays provisioning until a pod references the PVC — ' +
+        'but the default Immediate mode provisions right away, so this is not the most common cause.',
     },
     {
       question: 'You delete a PVC that was bound to a dynamically provisioned PV with reclaimPolicy: Delete. Later, you realize you needed that data. Can you recover it?',

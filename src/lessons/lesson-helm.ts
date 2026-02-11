@@ -91,6 +91,11 @@ export const lessonHelm: Lesson = {
           '`helm upgrade my-app nginx-chart --set image.tag=2.0` — updates an existing release. ' +
           'Helm computes the diff between the current and new templates, applies changes, and increments ' +
           'the revision (2). Kubernetes handles the actual rolling update of pods.\n\n' +
+          'Important gotcha: `--set` values from a previous install or upgrade are NOT automatically carried forward. ' +
+          'If you installed with `--set replicaCount=5 --set image.tag=1.0`, then upgraded with `--set image.tag=2.0`, ' +
+          'replicaCount reverts to the chart default because it was not specified in the upgrade. ' +
+          'Use `helm upgrade --reuse-values` to carry forward existing values, or use a values file ' +
+          '(`-f values.yaml`) to ensure all settings are explicitly tracked.\n\n' +
           '`helm rollback my-app 1` — reverts to a previous revision. Helm re-applies the templates from ' +
           'revision 1, effectively undoing the upgrade. This creates a new revision (3) that matches revision 1.\n\n' +
           'Every operation is tracked. `helm history my-app` shows all revisions with timestamps, status, ' +

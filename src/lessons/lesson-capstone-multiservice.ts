@@ -6,45 +6,51 @@ export const lessonCapstoneMultiservice: Lesson = {
   id: 23,
   title: 'Capstone: Multi-Service Architecture',
   description:
-    'Diagnose and fix a complex multi-service application with broken deployments, misconfigured services, a failing StatefulSet, and a downed node.',
+    'Diagnose and fix a complex multi-service application with a missing ConfigMap, crashing workers, a misconfigured service, and an under-scaled frontend.',
   mode: 'full',
   goalDescription:
-    'Fix all issues: the backend has an image typo ("backnd:1.0" should be "backend:1.0"), the backend-svc has the wrong selector (app=back-end should be app=backend), and node-3 is cordoned. All deployments healthy, all services with endpoints, all nodes Ready.',
+    'Fix all issues: create the missing "api-config" ConfigMap so API pods can start, fix the worker image ("workerr:1.0" should be "worker:1.0"), patch the cache-svc selector (app=redis-cache should be app=cache), and scale frontend to 3 replicas.',
   successMessage:
-    'Congratulations! You diagnosed and fixed a complex multi-service architecture: image typo on backend, ' +
-    'wrong selector on backend-svc, and a NotReady node. These are the exact issues you will encounter in production.',
+    'Congratulations! You diagnosed and fixed: missing ConfigMap dependency, CrashLoopBackOff from bad image, ' +
+    'wrong selector on cache-svc, and under-scaled frontend. These are the real-world failure modes you\'ll encounter in production.',
   hints: [
-    { text: 'Start with kubectl get pods to identify which pods are failing.' },
-    { text: 'Use kubectl get events to check for ImagePullError messages.' },
-    { text: 'The backend image has a typo: "backnd:1.0" instead of "backend:1.0".' },
-    { text: 'kubectl set image deployment/backend backend:1.0', exact: true },
-    { text: 'The backend-svc selector doesn\'t match — compare with actual pod labels.' },
-    { text: 'kubectl patch service backend-svc --selector=app=backend', exact: true },
-    { text: 'kubectl uncordon node-3', exact: true },
+    { text: 'Start with kubectl get pods to see which pods are failing and why.' },
+    { text: 'API pods show CreateContainerConfigError — they need a ConfigMap called "api-config".' },
+    { text: 'kubectl create configmap api-config --from-literal=DB_HOST=database', exact: true },
+    { text: 'Worker pods are in CrashLoopBackOff — check the image name with kubectl describe.' },
+    { text: 'kubectl set image deployment/worker worker=worker:1.0', exact: true },
+    { text: 'The cache-svc has 0 endpoints — its selector doesn\'t match the cache pod labels.' },
+    { text: 'kubectl patch service cache-svc --selector=app=cache', exact: true },
   ],
   goals: [
     {
-      description: 'Fix the backend image typo ("backnd:1.0" \u2192 "backend:1.0")',
+      description: 'Create the missing "api-config" ConfigMap so API pods can start',
       check: (s: ClusterState) => {
-        const backend = s.deployments.find(d => d.metadata.name === 'backend');
-        return !!backend && backend.spec.template.spec.image === 'backend:1.0';
+        return s.configMaps.some(cm => cm.metadata.name === 'api-config');
       },
     },
     {
-      description: 'Fix backend-svc selector (app=back-end \u2192 app=backend)',
+      description: 'Fix the worker image typo ("workerr:1.0" → "worker:1.0")',
       check: (s: ClusterState) => {
-        const svc = s.services.find(svc => svc.spec.selector['app'] === 'backend');
-        return !!svc && svc.status.endpoints.length > 0;
+        const worker = s.deployments.find(d => d.metadata.name === 'worker');
+        return !!worker && worker.spec.template.spec.image === 'worker:1.0';
       },
     },
     {
-      description: 'Uncordon node-3',
-      check: (s: ClusterState) => s.nodes.every(n => n.status.conditions[0].status === 'True'),
+      description: 'Fix cache-svc selector to match cache pods (app=cache)',
+      check: (s: ClusterState) => {
+        const svc = s.services.find(svc => svc.metadata.name === 'cache-svc');
+        return !!svc && svc.spec.selector['app'] === 'cache' && svc.status.endpoints.length > 0;
+      },
     },
     {
-      description: 'All deployments healthy with Running pods',
+      description: 'Scale frontend to 3 replicas',
       check: (s: ClusterState) => {
-        return s.deployments.every(d => (d.status.readyReplicas || 0) >= d.spec.replicas);
+        const frontend = s.deployments.find(d => d.metadata.name === 'frontend');
+        const frontendPods = s.pods.filter(
+          p => p.metadata.labels['app'] === 'frontend' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+        );
+        return !!frontend && frontend.spec.replicas >= 3 && frontendPods.length >= 3;
       },
     },
     {
@@ -63,12 +69,12 @@ export const lessonCapstoneMultiservice: Lesson = {
           'A typical web application might have:\n\n' +
           '- Frontend: serves the UI (nginx, React build)\n' +
           '- Backend API: handles business logic (Node.js, Go, Python)\n' +
-          '- Database: persistent data store (MySQL, PostgreSQL)\n' +
+          '- Worker: background processing (job queues, async tasks)\n' +
           '- Cache: in-memory data store (Redis)\n' +
-          '- Message queue: async communication (RabbitMQ, Kafka)\n\n' +
+          '- Database: persistent data store (MySQL, PostgreSQL)\n\n' +
           'Each service runs as its own Deployment (or StatefulSet for stateful components), with a Service ' +
-          'providing internal DNS for communication. The frontend talks to the backend via backend-svc, ' +
-          'the backend talks to the database via db-svc, and so on.\n\n' +
+          'providing internal DNS for communication. The frontend talks to the API via api-svc, ' +
+          'the API talks to the cache via cache-svc, and so on.\n\n' +
           'This decomposition means each service can be scaled, updated, and debugged independently. ' +
           'But it also means there are more things that can go wrong — and the failure of one service ' +
           'can cascade to others.',
@@ -76,53 +82,55 @@ export const lessonCapstoneMultiservice: Lesson = {
           'Microservices in Kubernetes communicate via Services. Each component is independently scalable and updatable, but failures can cascade across service boundaries.',
       },
       {
-        title: 'Service Mesh Concepts',
+        title: 'Configuration Dependencies',
         content:
-          'As the number of services grows, managing communication becomes complex. A service mesh adds ' +
-          'a dedicated infrastructure layer for service-to-service communication.\n\n' +
-          'A service mesh (like Istio, Linkerd, or Cilium) provides:\n\n' +
-          '- Mutual TLS: automatic encryption between services, no code changes needed\n' +
-          '- Traffic management: canary deployments, traffic splitting, retries, circuit breakers\n' +
-          '- Observability: distributed tracing, metrics, access logs for every request between services\n' +
-          '- Access control: fine-grained policies for which services can talk to which\n\n' +
-          'The mesh works by injecting a sidecar proxy (like Envoy) into every pod. All traffic flows through ' +
-          'the proxy, which enforces policies and collects telemetry. The application code is unaware of the mesh.\n\n' +
-          'You do not need a service mesh for simple architectures. But once you have 10+ services in production, ' +
-          'the operational benefits — automatic TLS, distributed tracing, traffic control — become essential.',
+          'In a multi-service architecture, services depend not just on each other but on configuration. ' +
+          'A backend API needs database connection strings, API keys, and feature flags — typically stored ' +
+          'in ConfigMaps and Secrets.\n\n' +
+          'When a pod references a ConfigMap or Secret via `envFrom` and that ConfigMap doesn\'t exist, ' +
+          'the pod gets stuck in CreateContainerConfigError. It cannot start at all — not even to crash. ' +
+          'This is different from CrashLoopBackOff where the container starts but then exits.\n\n' +
+          'The distinction matters for debugging:\n' +
+          '- CreateContainerConfigError → missing ConfigMap/Secret (fix: create the missing resource)\n' +
+          '- CrashLoopBackOff → container starts but crashes (fix: check logs, fix the application or its config)\n' +
+          '- ImagePullError → wrong image name or missing registry (fix: correct the image reference)\n\n' +
+          'Each failure mode has a different root cause and a different fix. Learning to recognize ' +
+          'the status and immediately know what to look for is the core skill of Kubernetes debugging.',
         keyTakeaway:
-          'Service meshes manage service-to-service communication at scale. They provide encryption, traffic control, and observability without changing application code. Consider one when complexity grows.',
+          'ConfigMap/Secret dependencies cause CreateContainerConfigError — the pod cannot start at all. This is distinct from CrashLoopBackOff (starts then crashes) and ImagePullError (wrong image). Each status maps to a specific root cause.',
       },
       {
         title: 'Debugging Multi-Service Issues',
         content:
           'When a multi-service application breaks, the symptom often appears far from the root cause. ' +
-          'Users see a 500 error on the frontend, but the actual problem is a database connection failure ' +
+          'Users see a 500 error on the frontend, but the actual problem is a missing ConfigMap ' +
           'three hops away.\n\n' +
           'Systematic approach for multi-service debugging:\n\n' +
           '1. kubectl get pods — any non-Running pods? Start with the obviously broken ones.\n' +
           '2. kubectl get events — Warning events point to root causes.\n' +
           '3. kubectl get services — any services with 0 endpoints? Traffic cannot reach them.\n' +
-          '4. kubectl get nodes — any NotReady? Pods may have been evicted.\n' +
-          '5. Trace the dependency chain: frontend depends on backend, backend depends on database. ' +
-          '   Fix upstream services first (database), then downstream (backend, then frontend).\n\n' +
+          '4. kubectl describe <broken-pod> — read the status reason and message.\n' +
+          '5. Trace the dependency chain: frontend depends on API, API depends on config and cache. ' +
+          '   Fix infrastructure dependencies first (ConfigMaps, Secrets), then services.\n\n' +
           'Common multi-service failure patterns:\n' +
-          '- Image typo on one service cascades to dependent services timing out\n' +
+          '- Missing ConfigMap/Secret blocks pod startup entirely\n' +
+          '- Bad image on one service causes CrashLoopBackOff with escalating restart delays\n' +
           '- Service selector mismatch means traffic never reaches healthy pods\n' +
-          '- Node failure reduces capacity, making multiple deployments under-replicated\n' +
-          '- ConfigMap/Secret changes not picked up by pods (need restart)',
+          '- Under-scaled deployment handles normal load but fails under peak traffic',
         diagram:
           '  User Request\n' +
           '       │\n' +
           '       ▼\n' +
-          '  [frontend-svc] ──→ frontend pods (Running? ✓)\n' +
+          '  [frontend-svc] ──→ frontend pods (1 Running, need 3)\n' +
           '       │\n' +
           '       ▼\n' +
-          '  [backend-svc]  ──→ backend pods  (ImagePullError! ✗)\n' +
-          '       │                 └── Fix: correct image name\n' +
+          '  [api-svc]      ──→ api pods (CreateContainerConfigError!)\n' +
+          '       │                 └── Fix: create missing ConfigMap\n' +
           '       ▼\n' +
-          '  [database-svc] ──→ database pods (Running? ✓)',
+          '  [cache-svc]    ──→ 0 endpoints (selector mismatch!)\n' +
+          '                       └── Fix: patch selector',
         keyTakeaway:
-          'In multi-service architectures, trace failures through the dependency chain. Fix infrastructure issues first (nodes), then upstream services (database), then downstream (backend, frontend).',
+          'In multi-service architectures, trace failures through the dependency chain. Fix configuration dependencies first (ConfigMaps/Secrets), then fix application issues (images, selectors), then scale.',
       },
       {
         title: 'Observability: Logs, Metrics, and Traces',
@@ -146,58 +154,58 @@ export const lessonCapstoneMultiservice: Lesson = {
   quiz: [
     {
       question:
-        'Users report the frontend returns "504 Gateway Timeout." You check: backend pods show status Running, the backend Service ' +
+        'A pod shows status "CreateContainerConfigError" while another pod in a different deployment shows "CrashLoopBackOff." ' +
+        'A junior engineer says both have the same root cause. Is this correct?',
+      choices: [
+        'Yes — both indicate the container cannot run, so the fix is the same: delete and recreate the pod',
+        'No — CreateContainerConfigError means a referenced ConfigMap/Secret is missing; CrashLoopBackOff means the container starts but crashes',
+        'Yes — both are caused by incorrect image configurations and require image fixes',
+        'No — CreateContainerConfigError is a node-level issue while CrashLoopBackOff is a container-level issue',
+      ],
+      correctIndex: 1,
+      explanation:
+        'These are fundamentally different failures. CreateContainerConfigError happens BEFORE the container starts — ' +
+        'Kubernetes cannot even create the container because a required ConfigMap or Secret does not exist. The fix is to create ' +
+        'the missing resource. CrashLoopBackOff happens AFTER the container starts — it runs briefly, then exits with an error. ' +
+        'The fix requires checking logs to understand why the application crashes. Recognizing the status immediately tells you ' +
+        'whether to look for missing configuration resources or application-level bugs.',
+    },
+    {
+      question:
+        'Users report the frontend returns "504 Gateway Timeout." You check: API pods show status Running, the API Service ' +
         'has endpoints, and network policies allow traffic. What is the MOST LIKELY cause?',
       choices: [
-        'The backend Service is using the wrong port number and connections are being refused by the container',
-        'The frontend is misconfigured and sending requests to a Service name that does not match the backend',
-        'The 504 is caused by the frontend pod itself timing out on internal processing, unrelated to the backend',
-        'The backend pods are Running but the application is overloaded or deadlocked — Running does not mean responsive',
+        'The API Service is using the wrong port number and connections are being refused by the container',
+        'The frontend is misconfigured and sending requests to a Service name that does not match the API',
+        'The 504 is caused by the frontend pod itself timing out on internal processing, unrelated to the API',
+        'The API pods are Running but the application is overloaded or deadlocked — Running does not mean responsive',
       ],
       correctIndex: 3,
       explanation:
         'This is a critical distinction: a pod in "Running" status means the container process is alive, NOT that the ' +
         'application is healthy or responding. A deadlocked, overloaded, or stuck application will still show as Running. ' +
-        'The 504 timeout occurs because the backend accepts the TCP connection (endpoints exist) but never sends a response. ' +
+        'The 504 timeout occurs because the API accepts the TCP connection (endpoints exist) but never sends a response. ' +
         'Check readiness probes (which should have caught this), application logs, and resource usage. This is why readiness ' +
         'probes exist — they distinguish "process alive" from "ready to serve traffic."',
     },
     {
       question:
-        'You are debugging a multi-service outage. `kubectl get pods` shows all pods Running. `kubectl get svc` shows all services have endpoints. ' +
-        'Users still see errors. What should you check FIRST?',
+        'Your architecture has: frontend -> API -> cache -> database. The cache service has 0 endpoints despite cache pods running. ' +
+        'What user-facing symptom do you expect?',
       choices: [
-        'Node disk pressure and memory utilization — the underlying infrastructure may be degraded beneath the pods',
-        'kubectl get events — Warning events reveal OOMKills, failed probes, and resource pressure hidden from pod status',
-        'Delete all pods to force a fresh restart since a clean recreation often resolves transient state issues',
-        'Check if the cluster DNS (CoreDNS) pods are running since all inter-service discovery relies on DNS resolution',
+        'No impact — the API will bypass the cache and query the database directly as a fallback',
+        'The frontend loads but API responses are slow or timeout because the API cannot reach the cache',
+        'Only cached data is affected — fresh database queries still work normally through the API',
+        'The entire frontend is down because Kubernetes stops routing to the API when any downstream dependency fails',
       ],
       correctIndex: 1,
       explanation:
-        'Events are the first place to look because they surface problems that pod status hides: recent OOMKills (pod restarted ' +
-        'and is Running again but lost state), failed liveness/readiness probes, resource quota violations, or node pressure. ' +
-        'A pod can be "Running" right now but have been OOMKilled 30 seconds ago and restarted with empty caches. ' +
-        'Option D (CoreDNS) is worth checking but is less common. Option C (deleting pods) destroys diagnostic evidence. ' +
-        'Always gather information before taking destructive action.',
-    },
-    {
-      question:
-        'Your architecture has: frontend -> API gateway -> backend -> database. The database runs out of connections. ' +
-        'Which failure pattern do you expect to see?',
-      choices: [
-        'Each service times out waiting on the next — backend on database, gateway on backend, frontend on gateway — a cascading failure',
-        'Only the database pod crashes; the frontend, API gateway, and backend continue operating using locally cached responses',
-        'The API gateway circuit breaker detects the database failure and immediately returns errors, preventing any cascade',
-        'Kubernetes detects the connection exhaustion and automatically restarts the database pod with increased connection limits',
-      ],
-      correctIndex: 0,
-      explanation:
-        'Without circuit breakers or timeout budgets, failures cascade through the dependency chain. The database cannot ' +
-        'serve queries, so backend requests queue up and eventually time out. Those timeouts propagate to the API gateway, ' +
-        'then to the frontend. Each layer adds its own timeout duration, so users experience the sum of all timeouts. ' +
-        'Option C describes the ideal behavior WITH a service mesh/circuit breaker pattern, but it requires explicit ' +
-        'configuration — it does not happen by default. This cascading pattern is the primary motivation for service meshes ' +
-        'with retry budgets, circuit breakers, and timeout propagation.',
+        'When the cache service has 0 endpoints, the API\'s requests to cache-svc have no backend to route to. ' +
+        'Depending on the application, this causes timeouts or connection errors in the API, which cascade to the frontend as ' +
+        'slow responses or 5xx errors. The API won\'t automatically fall back to the database — that would require explicit ' +
+        'circuit breaker logic in the application code. Kubernetes routes traffic based on selectors and endpoints; it does not ' +
+        'understand application-level fallback patterns. This is why service selector mismatches can cause cascading failures ' +
+        'even when all pods are healthy.',
     },
     {
       question:
@@ -219,16 +227,16 @@ export const lessonCapstoneMultiservice: Lesson = {
     },
   ],
   podFailureRules: {
-    'backnd:1.0': 'ImagePullError',
+    'workerr:1.0': 'CrashLoopBackOff',
   },
   initialState: () => {
-    // --- Frontend Deployment (2 replicas, running) ---
+    // --- Frontend Deployment (1 replica running, needs scaling to 3) ---
     const frontendImage = 'nginx:1.21';
     const frontendHash = templateHash({ image: frontendImage });
     const frontendDepUid = generateUID();
     const frontendRsUid = generateUID();
 
-    const frontendPods = Array.from({ length: 2 }, (_, i) => ({
+    const frontendPods = Array.from({ length: 1 }, () => ({
       kind: 'Pod' as const,
       metadata: {
         name: generatePodName(`frontend-${frontendHash.slice(0, 10)}`),
@@ -241,55 +249,90 @@ export const lessonCapstoneMultiservice: Lesson = {
         },
         creationTimestamp: Date.now() - 60000,
       },
-      spec: { image: frontendImage, nodeName: `node-${i + 1}` },
+      spec: { image: frontendImage, nodeName: 'node-1' },
       status: { phase: 'Running' as const, tickCreated: 0 },
     }));
 
-    // --- Backend Deployment (3 replicas, image typo = ImagePullError) ---
-    const backendBadImage = 'backnd:1.0'; // typo!
-    const backendHash = templateHash({ image: backendBadImage });
-    const backendDepUid = generateUID();
-    const backendRsUid = generateUID();
+    // --- API Deployment (2 replicas, stuck on missing ConfigMap) ---
+    const apiImage = 'api:2.0';
+    const apiHash = templateHash({ image: apiImage });
+    const apiDepUid = generateUID();
+    const apiRsUid = generateUID();
 
-    const backendPods = Array.from({ length: 3 }, (_, i) => ({
+    const apiPods = Array.from({ length: 2 }, () => ({
       kind: 'Pod' as const,
       metadata: {
-        name: generatePodName(`backend-${backendHash.slice(0, 10)}`),
+        name: generatePodName(`api-${apiHash.slice(0, 10)}`),
         uid: generateUID(),
-        labels: { app: 'backend', 'pod-template-hash': backendHash },
+        labels: { app: 'api', 'pod-template-hash': apiHash },
         ownerReference: {
           kind: 'ReplicaSet',
-          name: `backend-${backendHash.slice(0, 10)}`,
-          uid: backendRsUid,
+          name: `api-${apiHash.slice(0, 10)}`,
+          uid: apiRsUid,
         },
         creationTimestamp: Date.now() - 30000,
       },
-      spec: { image: backendBadImage, nodeName: `node-${(i % 2) + 1}`, failureMode: 'ImagePullError' as const },
-      status: { phase: 'Pending' as const, reason: 'ImagePullError', message: `Failed to pull image "${backendBadImage}"`, tickCreated: 0 },
+      spec: {
+        image: apiImage,
+        nodeName: 'node-1',
+        envFrom: [{ configMapRef: 'api-config' }],
+      },
+      status: {
+        phase: 'Pending' as const,
+        reason: 'CreateContainerConfigError',
+        message: 'configmap "api-config" not found',
+      },
     }));
 
-    // --- Database StatefulSet (1 replica, running) ---
-    const dbUid = generateUID();
-    const dbPod = {
+    // --- Worker Deployment (2 replicas, bad image causing CrashLoopBackOff) ---
+    const workerBadImage = 'workerr:1.0'; // typo!
+    const workerHash = templateHash({ image: workerBadImage });
+    const workerDepUid = generateUID();
+    const workerRsUid = generateUID();
+
+    const workerPods = Array.from({ length: 2 }, () => ({
       kind: 'Pod' as const,
       metadata: {
-        name: 'database-0',
+        name: generatePodName(`worker-${workerHash.slice(0, 10)}`),
         uid: generateUID(),
-        labels: { app: 'database' },
+        labels: { app: 'worker', 'pod-template-hash': workerHash },
         ownerReference: {
-          kind: 'StatefulSet',
-          name: 'database',
-          uid: dbUid,
+          kind: 'ReplicaSet',
+          name: `worker-${workerHash.slice(0, 10)}`,
+          uid: workerRsUid,
         },
+        creationTimestamp: Date.now() - 30000,
+      },
+      spec: {
+        image: workerBadImage,
+        nodeName: 'node-2',
+        failureMode: 'CrashLoopBackOff' as const,
+      },
+      status: {
+        phase: 'CrashLoopBackOff' as const,
+        reason: 'CrashLoopBackOff',
+        message: 'Back-off restarting failed container',
+        restartCount: 3,
+      },
+    }));
+
+    // --- Cache pod (running, but service has wrong selector) ---
+    const cacheImage = 'redis:7.0';
+    const cachePod = {
+      kind: 'Pod' as const,
+      metadata: {
+        name: 'cache-0',
+        uid: generateUID(),
+        labels: { app: 'cache' },
         creationTimestamp: Date.now() - 120000,
       },
-      spec: { image: 'mysql:8.0', nodeName: 'node-1' },
+      spec: { image: cacheImage, nodeName: 'node-2' },
       status: { phase: 'Running' as const, tickCreated: 0 },
     };
 
-    // --- Nodes (node-3 is NotReady) ---
+    // --- Nodes (all healthy, no cordoned nodes) ---
     const nodeNames = ['node-1', 'node-2', 'node-3'];
-    const nodes = nodeNames.map((name, i) => ({
+    const nodes = nodeNames.map((name) => ({
       kind: 'Node' as const,
       metadata: {
         name,
@@ -297,18 +340,18 @@ export const lessonCapstoneMultiservice: Lesson = {
         labels: { 'kubernetes.io/hostname': name },
         creationTimestamp: Date.now() - 300000,
       },
-      spec: { capacity: { pods: 5 } },
+      spec: { capacity: { pods: 6 } },
       status: {
         conditions: [{
           type: 'Ready' as const,
-          status: (i === 2 ? 'False' : 'True') as 'True' | 'False',
+          status: 'True' as 'True' | 'False',
         }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-        allocatedPods: i === 0 ? 3 : i === 1 ? 2 : 0,
+        allocatedPods: name === 'node-1' ? 3 : name === 'node-2' ? 3 : 0,
       },
     }));
 
     return {
-      pods: [...frontendPods, ...backendPods, dbPod],
+      pods: [...frontendPods, ...apiPods, ...workerPods, cachePod],
       replicaSets: [
         {
           kind: 'ReplicaSet' as const,
@@ -324,37 +367,60 @@ export const lessonCapstoneMultiservice: Lesson = {
             creationTimestamp: Date.now() - 120000,
           },
           spec: {
-            replicas: 2,
+            replicas: 1,
             selector: { app: 'frontend', 'pod-template-hash': frontendHash },
             template: {
               labels: { app: 'frontend', 'pod-template-hash': frontendHash },
               spec: { image: frontendImage },
             },
           },
-          status: { replicas: 2, readyReplicas: 2 },
+          status: { replicas: 1, readyReplicas: 1 },
         },
         {
           kind: 'ReplicaSet' as const,
           metadata: {
-            name: `backend-${backendHash.slice(0, 10)}`,
-            uid: backendRsUid,
-            labels: { app: 'backend', 'pod-template-hash': backendHash },
+            name: `api-${apiHash.slice(0, 10)}`,
+            uid: apiRsUid,
+            labels: { app: 'api', 'pod-template-hash': apiHash },
             ownerReference: {
               kind: 'Deployment',
-              name: 'backend',
-              uid: backendDepUid,
+              name: 'api',
+              uid: apiDepUid,
             },
             creationTimestamp: Date.now() - 60000,
           },
           spec: {
-            replicas: 3,
-            selector: { app: 'backend', 'pod-template-hash': backendHash },
+            replicas: 2,
+            selector: { app: 'api', 'pod-template-hash': apiHash },
             template: {
-              labels: { app: 'backend', 'pod-template-hash': backendHash },
-              spec: { image: backendBadImage },
+              labels: { app: 'api', 'pod-template-hash': apiHash },
+              spec: { image: apiImage },
             },
           },
-          status: { replicas: 3, readyReplicas: 0 },
+          status: { replicas: 2, readyReplicas: 0 },
+        },
+        {
+          kind: 'ReplicaSet' as const,
+          metadata: {
+            name: `worker-${workerHash.slice(0, 10)}`,
+            uid: workerRsUid,
+            labels: { app: 'worker', 'pod-template-hash': workerHash },
+            ownerReference: {
+              kind: 'Deployment',
+              name: 'worker',
+              uid: workerDepUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: {
+            replicas: 2,
+            selector: { app: 'worker', 'pod-template-hash': workerHash },
+            template: {
+              labels: { app: 'worker', 'pod-template-hash': workerHash },
+              spec: { image: workerBadImage },
+            },
+          },
+          status: { replicas: 2, readyReplicas: 0 },
         },
       ],
       deployments: [
@@ -367,7 +433,7 @@ export const lessonCapstoneMultiservice: Lesson = {
             creationTimestamp: Date.now() - 120000,
           },
           spec: {
-            replicas: 2,
+            replicas: 1,
             selector: { app: 'frontend' },
             template: {
               labels: { app: 'frontend' },
@@ -376,33 +442,58 @@ export const lessonCapstoneMultiservice: Lesson = {
             strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
           },
           status: {
-            replicas: 2,
-            updatedReplicas: 2,
-            readyReplicas: 2,
-            availableReplicas: 2,
+            replicas: 1,
+            updatedReplicas: 1,
+            readyReplicas: 1,
+            availableReplicas: 1,
             conditions: [{ type: 'Available', status: 'True' }],
           },
         },
         {
           kind: 'Deployment' as const,
           metadata: {
-            name: 'backend',
-            uid: backendDepUid,
-            labels: { app: 'backend' },
+            name: 'api',
+            uid: apiDepUid,
+            labels: { app: 'api' },
             creationTimestamp: Date.now() - 120000,
           },
           spec: {
-            replicas: 3,
-            selector: { app: 'backend' },
+            replicas: 2,
+            selector: { app: 'api' },
             template: {
-              labels: { app: 'backend' },
-              spec: { image: backendBadImage },
+              labels: { app: 'api' },
+              spec: { image: apiImage },
             },
             strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
           },
           status: {
-            replicas: 3,
-            updatedReplicas: 3,
+            replicas: 2,
+            updatedReplicas: 2,
+            readyReplicas: 0,
+            availableReplicas: 0,
+            conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
+          },
+        },
+        {
+          kind: 'Deployment' as const,
+          metadata: {
+            name: 'worker',
+            uid: workerDepUid,
+            labels: { app: 'worker' },
+            creationTimestamp: Date.now() - 120000,
+          },
+          spec: {
+            replicas: 2,
+            selector: { app: 'worker' },
+            template: {
+              labels: { app: 'worker' },
+              spec: { image: workerBadImage },
+            },
+            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+          },
+          status: {
+            replicas: 2,
+            updatedReplicas: 2,
             readyReplicas: 0,
             availableReplicas: 0,
             conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
@@ -425,13 +516,24 @@ export const lessonCapstoneMultiservice: Lesson = {
         {
           kind: 'Service' as const,
           metadata: {
-            name: 'backend-svc',
+            name: 'api-svc',
             uid: generateUID(),
             labels: {},
             creationTimestamp: Date.now() - 120000,
           },
-          // Wrong selector! Should be app=backend but says app=back-end
-          spec: { selector: { app: 'back-end' }, port: 8080 },
+          spec: { selector: { app: 'api' }, port: 8080 },
+          status: { endpoints: [] },
+        },
+        {
+          kind: 'Service' as const,
+          metadata: {
+            name: 'cache-svc',
+            uid: generateUID(),
+            labels: {},
+            creationTimestamp: Date.now() - 120000,
+          },
+          // Wrong selector! Pods have app=cache but service selects app=redis-cache
+          spec: { selector: { app: 'redis-cache' }, port: 6379 },
           status: { endpoints: [] },
         },
       ],
@@ -440,46 +542,26 @@ export const lessonCapstoneMultiservice: Lesson = {
           timestamp: Date.now() - 30000,
           tick: 0,
           type: 'Warning' as const,
-          reason: 'ImagePullError',
+          reason: 'Failed',
           objectKind: 'Pod',
-          objectName: backendPods[0]?.metadata.name || 'backend-pod',
-          message: `Failed to pull image "${backendBadImage}": image not found`,
+          objectName: apiPods[0]?.metadata.name || 'api-pod',
+          message: 'CreateContainerConfigError: configmap "api-config" not found',
         },
         {
           timestamp: Date.now() - 25000,
           tick: 0,
           type: 'Warning' as const,
-          reason: 'NodeNotReady',
-          objectKind: 'Node',
-          objectName: 'node-3',
-          message: 'Node node-3 status is NotReady',
+          reason: 'BackOff',
+          objectKind: 'Pod',
+          objectName: workerPods[0]?.metadata.name || 'worker-pod',
+          message: 'Back-off restarting failed container (restart count: 3)',
         },
       ],
       namespaces: [],
       configMaps: [],
       secrets: [],
       ingresses: [],
-      statefulSets: [
-        {
-          kind: 'StatefulSet' as const,
-          metadata: {
-            name: 'database',
-            uid: dbUid,
-            labels: { app: 'database' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 1,
-            selector: { app: 'database' },
-            serviceName: 'database-headless',
-            template: {
-              labels: { app: 'database' },
-              spec: { image: 'mysql:8.0' },
-            },
-          },
-          status: { replicas: 1, readyReplicas: 1, currentReplicas: 1 },
-        },
-      ],
+      statefulSets: [],
       daemonSets: [],
       jobs: [],
       cronJobs: [],
@@ -488,11 +570,18 @@ export const lessonCapstoneMultiservice: Lesson = {
     };
   },
   goalCheck: (state) => {
+    // ConfigMap must exist
+    if (!state.configMaps.some(cm => cm.metadata.name === 'api-config')) return false;
+
     // All deployments healthy: readyReplicas >= spec.replicas
     const deploymentsHealthy = state.deployments.every(
-      (d) => d.status.readyReplicas >= d.spec.replicas
+      (d) => (d.status.readyReplicas || 0) >= d.spec.replicas
     );
     if (!deploymentsHealthy) return false;
+
+    // Frontend must have 3+ replicas
+    const frontend = state.deployments.find(d => d.metadata.name === 'frontend');
+    if (!frontend || frontend.spec.replicas < 3) return false;
 
     // All services have endpoints
     const servicesHealthy = state.services.every(
@@ -500,11 +589,6 @@ export const lessonCapstoneMultiservice: Lesson = {
     );
     if (!servicesHealthy) return false;
 
-    // All nodes Ready
-    const allNodesReady = state.nodes.every(
-      (n) => n.status.conditions[0].status === 'True'
-    );
-
-    return allNodesReady;
+    return true;
   },
 };

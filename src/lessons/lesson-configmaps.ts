@@ -23,7 +23,7 @@ export const lessonConfigMaps: Lesson = {
       description: 'Create ConfigMap "app-config" with key LOG_LEVEL=info',
       check: (s: ClusterState) => {
         const cm = s.configMaps.find(c => c.metadata.name === 'app-config');
-        return !!cm && Object.keys(cm.data).length >= 1;
+        return !!cm && cm.data['LOG_LEVEL'] !== undefined;
       },
     },
     {
@@ -109,18 +109,18 @@ export const lessonConfigMaps: Lesson = {
           'Important: If a pod references a ConfigMap that does not exist, the pod will not start. ' +
           'Make sure ConfigMaps are created before the pods that need them.',
         diagram:
-          'ConfigMap "app-config"\\n' +
-          '┌──────────────────┐\\n' +
-          '│ LOG_LEVEL=debug   │\\n' +
-          '│ DB_HOST=postgres  │\\n' +
-          '└────────┬─────────┘\\n' +
-          '         │\\n' +
-          '    ┌────┴────┐\\n' +
-          '    │         │\\n' +
-          '  env vars  volume mount\\n' +
-          '    │         │\\n' +
-          '    ▼         ▼\\n' +
-          '  $LOG_LEVEL  /config/LOG_LEVEL\\n' +
+          'ConfigMap "app-config"\n' +
+          '┌──────────────────┐\n' +
+          '│ LOG_LEVEL=debug   │\n' +
+          '│ DB_HOST=postgres  │\n' +
+          '└────────┬─────────┘\n' +
+          '         │\n' +
+          '    ┌────┴────┐\n' +
+          '    │         │\n' +
+          '  env vars  volume mount\n' +
+          '    │         │\n' +
+          '    ▼         ▼\n' +
+          '  $LOG_LEVEL  /config/LOG_LEVEL\n' +
           '  (immutable) (auto-updates)',
         keyTakeaway:
           'ConfigMaps can be consumed as environment variables (envFrom or valueFrom) or as mounted files (volume mount). Always create the ConfigMap before creating pods that reference it.',

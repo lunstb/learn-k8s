@@ -69,7 +69,13 @@ export const lessonPods: Lesson = {
           'Succeeded: All containers exited with code 0. This is normal for batch jobs — they run once and finish.\n\n' +
           'Failed: A container exited with a non-zero code. Something went wrong.\n\n' +
           'Terminating: The pod is shutting down. Kubernetes gives it a grace period to finish work ' +
-          '(draining connections, running cleanup hooks), then forcefully stops it.',
+          '(draining connections, running cleanup hooks), then forcefully stops it.\n\n' +
+          'An important subtlety: pod phases and container statuses are different things. A pod can be in the Running ' +
+          'phase while its container is crashing repeatedly. When you see CrashLoopBackOff, the pod phase is still ' +
+          '"Running" — Kubernetes has placed it on a node and keeps trying to restart the container. CrashLoopBackOff ' +
+          'is a container-level status, not a pod phase. The kubelet restarts the container with increasing delays ' +
+          '(10s, 20s, 40s, up to 5 minutes). This distinction matters for debugging: "kubectl get pods" shows CrashLoopBackOff ' +
+          'in the STATUS column, which combines pod phase and container status into a single display.',
         diagram:
           '  Pending --> Running --> Succeeded\n' +
           '     |            |\n' +
@@ -77,7 +83,7 @@ export const lessonPods: Lesson = {
           '     |\n' +
           '     +---> Failed (e.g. ImagePullError)',
         keyTakeaway:
-          'A pod that\'s stuck in Pending is telling you something is wrong with scheduling or image pulling. A pod in CrashLoopBackOff is telling you the application is crashing. The phase is always your first diagnostic clue.',
+          'A pod stuck in Pending has a scheduling or image problem. CrashLoopBackOff means the container keeps crashing — but the pod phase is still Running. The STATUS column in "kubectl get pods" blends pod phase and container status, so learn to read both.',
       },
       {
         title: 'Standalone vs Managed Pods',

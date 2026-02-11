@@ -99,15 +99,15 @@ spec:
           'Kubernetes uses the maximum of (init container requests) and (sum of main container requests) for scheduling. ' +
           'This means a CPU-intensive migration init container will not affect the pod\'s steady-state resource allocation.',
         diagram:
-          'Pod startup sequence:\\n' +
-          '\\n' +
-          '  Init Container 1    Init Container 2    Main Container\\n' +
-          '  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐\\n' +
-          '  │  wait-for-db │───▶│  migrations │───▶│    app      │\\n' +
-          '  │  (must pass) │    │  (must pass) │    │  (starts)   │\\n' +
-          '  └─────────────┘    └─────────────┘    └─────────────┘\\n' +
-          '       ▲ fails?           ▲ fails?\\n' +
-          '       │ restart           │ restart\\n' +
+          'Pod startup sequence:\n' +
+          '\n' +
+          '  Init Container 1    Init Container 2    Main Container\n' +
+          '  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐\n' +
+          '  │  wait-for-db │───▶│  migrations │───▶│    app      │\n' +
+          '  │  (must pass) │    │  (must pass) │    │  (starts)   │\n' +
+          '  └─────────────┘    └─────────────┘    └─────────────┘\n' +
+          '       ▲ fails?           ▲ fails?\n' +
+          '       │ restart           │ restart\n' +
           '       └───────┘           └───────┘',
         keyTakeaway:
           'Init containers run sequentially. Failure blocks the pod. Pod restarts re-run all init containers. Design init containers to be idempotent (safe to re-run).',

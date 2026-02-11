@@ -49,14 +49,14 @@ export const lessonSecrets: Lesson = {
           'they can be restricted with RBAC so only specific pods and users can read them, and they are stored in ' +
           'memory on nodes (tmpfs) rather than being written to disk when mounted as volumes.',
         diagram:
-          'ConfigMap                    Secret\\n' +
-          '┌────────────────┐          ┌────────────────┐\\n' +
-          '│ Plain text     │          │ Base64 encoded  │\\n' +
-          '│ No RBAC needed │          │ RBAC restricted │\\n' +
-          '│ Stored on disk │          │ tmpfs in memory │\\n' +
-          '│                │          │ Size limit: 1MB │\\n' +
-          '└────────────────┘          └────────────────┘\\n' +
-          '  Use for: config,            Use for: passwords,\\n' +
+          'ConfigMap                    Secret\n' +
+          '┌────────────────┐          ┌────────────────┐\n' +
+          '│ Plain text     │          │ Base64 encoded  │\n' +
+          '│ No RBAC needed │          │ RBAC restricted │\n' +
+          '│ Stored on disk │          │ tmpfs in memory │\n' +
+          '│                │          │ Size limit: 1MB │\n' +
+          '└────────────────┘          └────────────────┘\n' +
+          '  Use for: config,            Use for: passwords,\n' +
           '  feature flags               tokens, TLS certs',
         keyTakeaway:
           'Secrets exist because sensitive data needs different handling than regular config. They provide obscuring, RBAC integration, and in-memory storage that ConfigMaps do not.',

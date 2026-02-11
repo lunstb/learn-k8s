@@ -9,15 +9,15 @@ export const lessonDebugging: Lesson = {
     'Learn to diagnose and fix the two most common pod failures: ImagePullError and CrashLoopBackOff.',
   mode: 'full',
   goalDescription:
-    'Deploy a bad image to trigger an ImagePullError, diagnose and fix it. Then trigger a CrashLoopBackOff and fix that. Final state: all 3 pods Running nginx:2.0.',
+    'Trigger an ImagePullError by deploying a typo\'d image name ("nignx:2.0"), then use events and describe to diagnose and fix it. Final state: all 3 pods Running nginx:2.0.',
   successMessage:
-    'ImagePullError = bad image name. CrashLoopBackOff = app crashes on start. ' +
-    'Events and describe are your debugging tools.',
+    'You diagnosed and fixed an ImagePullError using events and describe. ' +
+    'ImagePullError = bad image name or missing tag. Always check the image string first when pods won\'t start.',
   hints: [
     { text: 'Try setting a deliberately bad image name to see what happens.' },
-    { text: 'kubectl set image deployment/web-app nignx:2.0', exact: true },
+    { text: 'kubectl set image deployment/web-app web-app=nignx:2.0', exact: true },
     { text: 'Use kubectl get events to see the error. Fix the typo in the image name.' },
-    { text: 'kubectl set image deployment/web-app nginx:2.0', exact: true },
+    { text: 'kubectl set image deployment/web-app web-app=nginx:2.0', exact: true },
   ],
   goals: [
     {

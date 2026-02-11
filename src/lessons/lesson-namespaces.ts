@@ -46,15 +46,15 @@ export const lessonNamespaces: Lesson = {
           'scope for resource names. Two teams can each have a deployment called "api" as long as they live in ' +
           'different namespaces. Think of namespaces as folders on a filesystem — they organize resources and prevent conflicts.',
         diagram:
-          'Cluster\\n' +
-          '┌─────────────────────────────────────────────┐\\n' +
-          '│  Namespace: default    Namespace: production │\\n' +
-          '│  ┌─────────────┐      ┌─────────────┐      │\\n' +
-          '│  │ pod: api    │      │ pod: api    │      │\\n' +
-          '│  │ svc: api    │      │ svc: api    │      │\\n' +
-          '│  │ cm: config  │      │ cm: config  │      │\\n' +
-          '│  └─────────────┘      └─────────────┘      │\\n' +
-          '│        Same names, completely isolated       │\\n' +
+          'Cluster\n' +
+          '┌─────────────────────────────────────────────┐\n' +
+          '│  Namespace: default    Namespace: production │\n' +
+          '│  ┌─────────────┐      ┌─────────────┐      │\n' +
+          '│  │ pod: api    │      │ pod: api    │      │\n' +
+          '│  │ svc: api    │      │ svc: api    │      │\n' +
+          '│  │ cm: config  │      │ cm: config  │      │\n' +
+          '│  └─────────────┘      └─────────────┘      │\n' +
+          '│        Same names, completely isolated       │\n' +
           '└─────────────────────────────────────────────┘',
         keyTakeaway:
           'Namespaces partition a cluster into logical groups. They prevent name collisions and provide a boundary for access control and resource quotas.',
@@ -98,9 +98,17 @@ export const lessonNamespaces: Lesson = {
           'To enforce limits, you pair namespaces with ResourceQuotas. A ResourceQuota sets hard limits on ' +
           'how many objects (pods, services, configmaps) or how much compute (CPU, memory) a namespace can consume.\n\n' +
           'For example, you might give the "dev" namespace a quota of 10 pods and 4 CPU cores, while "production" ' +
-          'gets 100 pods and 32 cores. If a team in "dev" tries to create an 11th pod, the API server rejects the request.\n\n' +
+          'gets 100 pods and 32 cores. Quotas are enforced at pod creation time by the admission controller — ' +
+          'not at the deployment spec level. This means a deployment can set replicas=12, but if only 10 pods fit within the quota, ' +
+          'pods 11 and 12 are rejected. The deployment spec updates successfully; only the actual pod creation is blocked.\n\n' +
           'LimitRanges complement quotas by setting defaults and constraints for individual containers. ' +
-          'If a developer forgets to set resource requests, a LimitRange can inject default values automatically.\n\n' +
+          'If a developer forgets to set resource requests, a LimitRange can inject default values automatically. ' +
+          'This matters because of QoS classes: Kubernetes assigns every pod a Quality of Service class based on its resource settings:\n' +
+          '- Guaranteed: requests = limits for all containers (highest priority, evicted last)\n' +
+          '- Burstable: requests set but lower than limits (middle priority)\n' +
+          '- BestEffort: no requests or limits set at all (lowest priority, evicted first under node pressure)\n\n' +
+          'Without a LimitRange, pods with no resource specs get BestEffort QoS — they are the first to be killed ' +
+          'when a node runs low on memory. This is why many production clusters require LimitRanges in every namespace.\n\n' +
           'Together, namespaces + ResourceQuotas + LimitRanges give cluster administrators fine-grained control ' +
           'over who uses what and how much.',
         keyTakeaway:

@@ -34,9 +34,9 @@ spec:
   ],
   goals: [
     {
-      description: 'Create an Ingress with a rule routing to "web-svc"',
+      description: 'Create an Ingress routing myapp.example.com to "web-svc"',
       check: (s: ClusterState) => {
-        return s.ingresses.some(ing => ing.spec.rules.some(r => r.serviceName === 'web-svc'));
+        return s.ingresses.some(ing => ing.spec.rules.some(r => r.serviceName === 'web-svc' && r.host === 'myapp.example.com'));
       },
     },
   ],

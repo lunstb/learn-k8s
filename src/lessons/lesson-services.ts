@@ -33,7 +33,10 @@ spec:
   goals: [
     {
       description: 'Create a Service named "web-svc" targeting app=web-app on port 80',
-      check: (s: ClusterState) => !!s.services.find(svc => svc.spec.selector['app'] === 'web-app'),
+      check: (s: ClusterState) => {
+        const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
+        return !!svc && svc.spec.selector['app'] === 'web-app' && svc.spec.port === 80;
+      },
     },
     {
       description: 'Scale the "web-app" Deployment to 5 replicas',
@@ -75,10 +78,16 @@ spec:
           'Kubernetes routes their traffic to one of the healthy pods.\n\n' +
           'How does a Service know which pods to route to? It uses a label selector — the same label-matching mechanism ' +
           'that ReplicaSets use to find their pods. You define a Service with a selector like app=api, and it automatically ' +
-          'discovers all pods with that label.\n\n' +
+          'discovers all pods with that label. Labels are case-sensitive: app=api and app=API are different values and will not match.\n\n' +
           'The Service maintains an endpoint list: the set of pod IPs that are currently eligible to receive traffic. ' +
-          'Only pods that are Running and match the selector are included. Pods that are Pending, Failed, or Terminating ' +
-          'are excluded — they are not ready to serve requests.\n\n' +
+          'A pod must meet ALL of these criteria to become an endpoint:\n' +
+          '- It matches the Service selector\n' +
+          '- It is in the Running phase (not Pending, Failed, or Terminating)\n' +
+          '- It is Ready — meaning its readiness probe is passing (if one is configured)\n\n' +
+          'That last point is critical. A pod can be Running (its container process is alive) but not Ready ' +
+          '(the application has not finished initializing, or it is temporarily overloaded). Kubernetes distinguishes between ' +
+          '"the process is alive" and "the application can serve traffic." Only Ready pods receive traffic through a Service. ' +
+          'You will learn more about readiness probes in the Probes lesson.\n\n' +
           'This means clients only need to know the Service name. They never need to know individual pod IPs, ' +
           'and they never need to be reconfigured when pods come and go.',
         diagram:
@@ -89,7 +98,7 @@ spec:
           '       ├──→ Pod B (app=api) ✓ Running  → endpoint\n' +
           '       └──→ Pod C (app=api) ✗ Pending  → NOT endpoint',
         keyTakeaway:
-          'A Service gives pods a stable identity. Clients talk to the Service name, which never changes. Only Running pods matching the selector become endpoints — unhealthy pods are automatically excluded.',
+          'A Service gives pods a stable identity. Clients talk to the Service name, which never changes. Only Running AND Ready pods matching the selector become endpoints — unhealthy or unready pods are automatically excluded.',
       },
       {
         title: 'How Services Route Traffic',
@@ -98,8 +107,13 @@ spec:
           'single pod — it is a stable address that Kubernetes manages for you. A component called kube-proxy, running ' +
           'on every node, watches for Services and their endpoints, then sets up networking rules so that traffic sent ' +
           'to the ClusterIP is forwarded to one of the matching pods.\n\n' +
+          'A Service definition has two important port fields:\n' +
+          '- port: the port the Service listens on — this is what clients connect to\n' +
+          '- targetPort: the port on the actual pod containers where traffic is delivered\n\n' +
+          'These can be different. For example, port: 80 with targetPort: 3000 lets clients connect on the standard ' +
+          'HTTP port (80) while the application listens on 3000. If targetPort is omitted, it defaults to the same value as port.\n\n' +
           'The endpoint list updates automatically. When you scale a Deployment from 3 to 5, the new pods become ' +
-          'endpoints as soon as they are Running. When you scale down or a pod is replaced, terminated pods are ' +
+          'endpoints as soon as they are Running and Ready. When you scale down or a pod is replaced, terminated pods are ' +
           'removed from the list. During rolling updates, old pods keep serving while new pods join the endpoint ' +
           'list as they become ready — ensuring zero downtime.\n\n' +
           'By default, kube-proxy distributes traffic roughly evenly across endpoints. If you need a client to ' +
@@ -120,7 +134,7 @@ spec:
           'Regardless of the type, the core mechanics are identical: the Service uses a label selector to find pods, ' +
           'maintains an endpoint list of Running matches, and routes traffic to those endpoints.',
         keyTakeaway:
-          'Service types control WHERE the service is accessible (cluster-internal, node port, or cloud load balancer), but the HOW is always the same: selectors find pods, only Running pods become endpoints.',
+          'Service types control WHERE the service is accessible (cluster-internal, node port, or cloud load balancer), but the HOW is always the same: selectors find pods, only Running and Ready pods become endpoints.',
       },
     ],
   },

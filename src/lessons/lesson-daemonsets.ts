@@ -43,8 +43,10 @@ spec:
       description: 'One Running pod on every Ready node',
       check: (s: ClusterState) => {
         const readyNodes = s.nodes.filter(n => n.status.conditions[0].status === 'True');
+        if (readyNodes.length === 0) return false;
         const runningPods = s.pods.filter(p => p.metadata.labels['app'] === 'log-collector' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
-        return readyNodes.length > 0 && runningPods.length >= readyNodes.length;
+        const coveredNodes = new Set(runningPods.map(p => p.spec.nodeName));
+        return readyNodes.every(n => coveredNodes.has(n.metadata.name));
       },
     },
   ],

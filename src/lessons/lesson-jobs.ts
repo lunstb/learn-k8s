@@ -35,7 +35,10 @@ spec:
   goals: [
     {
       description: 'Create a Job named "data-migration" with 3 completions',
-      check: (s: ClusterState) => !!s.jobs.find(j => j.metadata.name === 'data-migration'),
+      check: (s: ClusterState) => {
+        const j = s.jobs.find(j => j.metadata.name === 'data-migration');
+        return !!j && j.spec.completions === 3;
+      },
     },
     {
       description: 'Job reaches 3/3 successful completions',

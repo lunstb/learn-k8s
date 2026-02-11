@@ -67,6 +67,9 @@ export const lessonLabelsAnnotations: Lesson = {
           '  team: payments\n\n' +
           'Labels can be added at creation time (in metadata.labels) or dynamically with `kubectl label`. ' +
           'Unlike most Kubernetes fields, labels on running pods can be changed without recreating the pod.\n\n' +
+          'You can filter kubectl output by label using `-l` (or `--selector`): ' +
+          '`kubectl get pods -l app=web` shows only pods with that label. Combine with `-A` (or `--all-namespaces`) ' +
+          'to search across all namespaces: `kubectl get pods -l environment=production -A`.\n\n' +
           'This mutability is what makes labels powerful for operations: you can add a pod to a Service, ' +
           'remove it from a Service, or change its grouping on the fly.',
         keyTakeaway:
@@ -96,11 +99,11 @@ export const lessonLabelsAnnotations: Lesson = {
           '(also equality-based under the hood). Set-based expressions are used in node affinity ' +
           'and some advanced scheduling rules.',
         diagram:
-          'Service selector: {app: web, tier: frontend}\\n' +
-          '\\n' +
-          '  pod-1: {app: web}                    → NO MATCH  (missing tier)\\n' +
-          '  pod-2: {app: web, tier: frontend}    → MATCH ✓\\n' +
-          '  pod-3: {app: web, tier: backend}     → NO MATCH  (wrong tier)\\n' +
+          'Service selector: {app: web, tier: frontend}\n' +
+          '\n' +
+          '  pod-1: {app: web}                    → NO MATCH  (missing tier)\n' +
+          '  pod-2: {app: web, tier: frontend}    → MATCH ✓\n' +
+          '  pod-3: {app: web, tier: backend}     → NO MATCH  (wrong tier)\n' +
           '  pod-4: {app: api, tier: frontend}    → NO MATCH  (wrong app)',
         keyTakeaway:
           'Equality selectors match exact key=value pairs (AND logic). Set-based selectors use In/NotIn/Exists/DoesNotExist for more expressive queries. Most controllers use equality selectors.',

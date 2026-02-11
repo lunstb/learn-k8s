@@ -60,6 +60,7 @@ export interface SimulatorStore {
 
   // Hint state
   hintIndex: number;
+  practiceInitialized: boolean;
 
   // Prediction state
   currentStep: number;
@@ -222,6 +223,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   quizAnswers: [],
   quizRevealed: false,
   hintIndex: 0,
+  practiceInitialized: false,
   currentStep: 0,
   predictionPending: false,
   predictionResult: null,
@@ -818,6 +820,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       currentStep: 0,
       predictionPending: false,
       predictionResult: null,
+      practiceInitialized: false,
       yamlEditorContent: '',
       activeBottomTab: 'terminal',
     });
@@ -967,6 +970,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     set({
       lessonPhase: 'practice',
       lessonCompleted: false,
+      practiceInitialized: true,
       cluster,
       actions: [],
       terminalOutput,
@@ -981,18 +985,26 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   },
 
   goToPhase: (phase) => {
-    const { currentLesson } = get();
+    const { currentLesson, lessonPhase: currentPhase, practiceInitialized } = get();
     if (!currentLesson) return;
 
     if (phase === 'lecture') {
       set({ lessonPhase: 'lecture' });
     } else if (phase === 'quiz') {
-      get().startQuiz();
+      if (currentPhase === 'practice') {
+        // Going backward from practice: show quiz results without resetting
+        set({ lessonPhase: 'quiz' });
+      } else {
+        get().startQuiz();
+      }
     } else if (phase === 'practice') {
       if (currentLesson.mode === 'lecture-quiz') return;
-      // startPractice resets lessonCompleted — user is doing a fresh run.
-      // The checkmark in the sidebar persists via completedLessonIds.
-      get().startPractice();
+      if (practiceInitialized) {
+        // Practice was already running — just switch back without resetting
+        set({ lessonPhase: 'practice' });
+      } else {
+        get().startPractice();
+      }
     }
   },
 

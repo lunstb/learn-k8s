@@ -247,8 +247,8 @@ function QuizView() {
   const isFinished = quizAnswers.length === totalQuestions;
   const isLectureQuiz = currentLesson.mode === 'lecture-quiz';
 
-  // Show score summary after all questions answered
-  if (isFinished) {
+  // Show score summary only after the user dismisses the last explanation
+  if (isFinished && !quizRevealed) {
     const correctCount = quizAnswers.filter((a) => a.correct).length;
     const percentage = Math.round((correctCount / totalQuestions) * 100);
     const scoreClass = percentage >= 75 ? 'great' : percentage >= 50 ? 'okay' : 'needs-work';

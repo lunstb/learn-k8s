@@ -21,7 +21,7 @@ export const lessonClusterAutoscaling: Lesson = {
   goals: [
     {
       description: 'Karpenter provisions a new node for Unschedulable pods',
-      check: (s: ClusterState) => s.nodes.length > 2,
+      check: (s: ClusterState) => s.nodes.length > 1,
     },
     {
       description: 'All 5 "web" pods are Running',

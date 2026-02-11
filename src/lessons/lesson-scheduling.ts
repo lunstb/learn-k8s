@@ -9,37 +9,37 @@ export const lessonScheduling: Lesson = {
     'Pods run on nodes. The scheduler assigns Pending pods to nodes with capacity, and you control placement with cordon and uncordon.',
   mode: 'full',
   goalDescription:
-    'Cordon node-3 to mark it NotReady, observe pod eviction and rescheduling on healthy nodes, then uncordon node-3 to restore the cluster. End state: 6 Running pods across 3 Ready nodes.',
+    'Drain node-3 to evict its pods, watch them reschedule on healthy nodes, then uncordon node-3 to restore the cluster. End state: 6 Running pods across 3 schedulable nodes.',
   successMessage:
     'You\'ve mastered scheduling: cordon prevents placement, drain evicts pods, the RS recreates them, ' +
     'and the scheduler places them on healthy nodes.',
   hints: [
-    { text: 'Use kubectl cordon to mark a node as unschedulable (NotReady).' },
-    { text: 'kubectl cordon node-3', exact: true },
-    { text: 'After pods are evicted and rescheduled, restore the node.' },
+    { text: 'Use kubectl drain to evict all pods from a node and mark it unschedulable.' },
+    { text: 'kubectl drain node-3', exact: true },
+    { text: 'After pods are rescheduled to other nodes, restore node-3 with uncordon.' },
     { text: 'kubectl uncordon node-3', exact: true },
   ],
   goals: [
     {
-      description: 'Cordon node-3 (mark as NotReady)',
+      description: 'Drain node-3 (evict pods and mark unschedulable)',
       check: (s: ClusterState) => {
         const node = s.nodes.find(n => n.metadata.name === 'node-3');
-        return !!node && (node.status.conditions[0].status === 'False' || node.spec.unschedulable === true);
+        return !!node && node.spec.unschedulable === true;
       },
     },
     {
-      description: 'Uncordon node-3 (restore to Ready)',
+      description: 'Uncordon node-3 (mark as schedulable again)',
       check: (s: ClusterState) => {
         const node = s.nodes.find(n => n.metadata.name === 'node-3');
-        return !!node && node.status.conditions[0].status === 'True';
+        return !!node && !node.spec.unschedulable;
       },
     },
     {
-      description: 'All 6 pods Running across 3 Ready nodes',
+      description: 'All 6 pods Running across 3 schedulable nodes',
       check: (s: ClusterState) => {
         const running = s.pods.filter(p => p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
-        const ready = s.nodes.filter(n => n.status.conditions[0].status === 'True');
-        return running.length === 6 && ready.length === 3;
+        const schedulable = s.nodes.filter(n => !n.spec.unschedulable && n.status.conditions[0].status === 'True');
+        return running.length === 6 && schedulable.length === 3;
       },
     },
   ],
@@ -68,11 +68,17 @@ export const lessonScheduling: Lesson = {
           'When a new pod is created, it starts Pending with no node assigned. You could manually assign pods ' +
           'to nodes, but that defeats the purpose of orchestration. Instead, the scheduler automatically finds ' +
           'the best node for each pod.\n\n' +
-          'The scheduler\'s logic is straightforward: look at all nodes, filter out any that are ineligible ' +
-          '(cordoned, NotReady, or full), then pick the one with the most available capacity. This spreads ' +
-          'pods evenly across the cluster.\n\n' +
-          'If no node has available capacity, the pod stays Pending with reason "Unschedulable." It remains ' +
-          'in this state until capacity opens up — when a node is uncordoned, a new node is added, ' +
+          'The real Kubernetes scheduler uses a two-phase approach:\n\n' +
+          '1. Filtering: eliminate ineligible nodes (cordoned, NotReady, insufficient resources)\n' +
+          '2. Scoring: rank the remaining nodes using multiple factors — available resources, pod spreading ' +
+          'across zones, affinity rules, and more. The highest-scoring node wins.\n\n' +
+          'A critical detail: the scheduler uses resource requests, not actual CPU/memory usage. ' +
+          'If a node has 4 CPU cores and existing pods have requested 3 cores total (even if they are only using 1), ' +
+          'the scheduler sees only 1 core available. Scheduling is based on reservations, not utilization. ' +
+          'This can lead to nodes appearing underutilized while the scheduler treats them as nearly full.\n\n' +
+          'In this simulator, scheduling is simplified to a pod-count capacity model. ' +
+          'But the concept is the same: if no node has capacity, the pod stays Pending with reason "Unschedulable." ' +
+          'It remains in this state until capacity opens up — when a node is uncordoned, a new node is added, ' +
           'or existing pods are removed.\n\n' +
           'This automatic placement is what makes Kubernetes a true orchestrator. You declare "I want 5 pods" ' +
           'and the scheduler figures out where to put them. You don\'t think about individual machines.',
@@ -90,7 +96,7 @@ export const lessonScheduling: Lesson = {
           '       ▼\n' +
           '  Pod assigned to node-2',
         keyTakeaway:
-          'The scheduler is the matchmaker between pods and nodes. It automatically picks the best node by filtering ineligible ones and choosing the least loaded. You never manually assign pods to machines.',
+          'The scheduler filters ineligible nodes, then scores the rest. Scheduling is based on resource requests (reservations), not actual usage. You never manually assign pods to machines.',
       },
       {
         title: 'Cordon, Drain, and Uncordon: Managing Node Availability',
@@ -313,9 +319,9 @@ export const lessonScheduling: Lesson = {
     const runningPods = state.pods.filter(
       (p) => p.status.phase === 'Running' && !p.metadata.deletionTimestamp
     );
-    const readyNodes = state.nodes.filter(
-      (n) => n.status.conditions[0].status === 'True'
+    const schedulableNodes = state.nodes.filter(
+      (n) => n.status.conditions[0].status === 'True' && !n.spec.unschedulable
     );
-    return runningPods.length === 6 && readyNodes.length === 3;
+    return runningPods.length === 6 && schedulableNodes.length === 3;
   },
 };

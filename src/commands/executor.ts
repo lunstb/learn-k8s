@@ -59,6 +59,8 @@ export function executeCommand(input: string): string[] {
       return handleDescribe(cmd);
     case 'rollout-status':
       return handleRolloutStatus(cmd);
+    case 'rollout-restart':
+      return handleRolloutRestart(cmd);
     case 'cordon':
       return handleCordon(cmd, false);
     case 'uncordon':
@@ -681,18 +683,35 @@ function handleGet(cmd: ParsedCommand): string[] {
     if (podList.length === 0) {
       return ['No pods found.'];
     }
-    const header = padRow(['NAME', 'STATUS', 'RESTARTS', 'NODE', 'IMAGE']);
+    const showLabels = cmd.flags['show-labels'] === 'true';
+    const wideOutput = cmd.flags['o'] === 'wide';
+    const columns = ['NAME', 'STATUS', 'RESTARTS', 'NODE'];
+    if (wideOutput) columns.push('IP');
+    columns.push('IMAGE');
+    if (showLabels) columns.push('LABELS');
+    const header = padRow(columns);
     const rows = podList.map((p) => {
       const displayStatus = p.status.reason || p.status.phase;
       const restarts = p.status.restartCount || 0;
       const node = p.spec.nodeName || '<none>';
-      return padRow([
+      const cols = [
         p.metadata.name,
         displayStatus,
         String(restarts),
         node,
-        p.spec.image,
-      ]);
+      ];
+      if (wideOutput) {
+        // Generate a deterministic IP from pod UID
+        const hash = p.metadata.uid.replace(/[^0-9]/g, '').slice(0, 6);
+        const octet3 = parseInt(hash.slice(0, 3), 10) % 256;
+        const octet4 = parseInt(hash.slice(3, 6), 10) % 256 || 1;
+        cols.push(`10.244.${octet3}.${octet4}`);
+      }
+      cols.push(p.spec.image);
+      if (showLabels) {
+        cols.push(Object.entries(p.metadata.labels).map(([k, v]) => `${k}=${v}`).join(','));
+      }
+      return padRow(cols);
     });
     return [header, ...rows];
   }
@@ -726,14 +745,16 @@ function handleGet(cmd: ParsedCommand): string[] {
       return ['No nodes found.'];
     }
     const header = padRow(['NAME', 'STATUS', 'CAPACITY', 'ALLOCATED']);
-    const rows = nodeList.map((n) =>
-      padRow([
+    const rows = nodeList.map((n) => {
+      let status = n.status.conditions[0].status === 'True' ? 'Ready' : 'NotReady';
+      if (n.spec.unschedulable) status += ',SchedulingDisabled';
+      return padRow([
         n.metadata.name,
-        n.status.conditions[0].status === 'True' ? 'Ready' : 'NotReady',
+        status,
         String(n.spec.capacity.pods),
         String(n.status.allocatedPods),
-      ])
-    );
+      ]);
+    });
     return [header, ...rows];
   }
 
@@ -754,6 +775,27 @@ function handleGet(cmd: ParsedCommand): string[] {
         Object.entries(s.spec.selector).map(([k, v]) => `${k}=${v}`).join(','),
         String(s.spec.port),
         s.status.endpoints.length > 0 ? `${s.status.endpoints.length} ready` : '<none>',
+      ])
+    );
+    return [header, ...rows];
+  }
+
+  if (cmd.resourceType === 'endpoints') {
+    // Endpoints are derived from services — show endpoint IPs for each service
+    const svcList = cmd.resourceName
+      ? store.cluster.services.filter((s) => s.metadata.name === cmd.resourceName)
+      : store.cluster.services;
+    if (cmd.resourceName && svcList.length === 0) {
+      return [`Error: endpoints "${cmd.resourceName}" not found`];
+    }
+    if (svcList.length === 0) {
+      return ['No endpoints found.'];
+    }
+    const header = padRow(['NAME', 'ENDPOINTS']);
+    const rows = svcList.map((s) =>
+      padRow([
+        s.metadata.name,
+        s.status.endpoints.length > 0 ? s.status.endpoints.join(', ') : '<none>',
       ])
     );
     return [header, ...rows];
@@ -1430,13 +1472,16 @@ function handleDescribe(cmd: ParsedCommand): string[] {
     const podsOnNode = store.cluster.pods.filter(
       (p) => p.spec.nodeName === node.metadata.name && !p.metadata.deletionTimestamp
     );
-    return [
+    const nodeStatus = node.status.conditions[0].status === 'True' ? 'Ready' : 'NotReady';
+    const lines = [
       `Name:          ${node.metadata.name}`,
-      `Status:        ${node.status.conditions[0].status === 'True' ? 'Ready' : 'NotReady'}`,
+      `Status:        ${nodeStatus}${node.spec.unschedulable ? ',SchedulingDisabled' : ''}`,
+      `Unschedulable: ${node.spec.unschedulable ? 'true' : 'false'}`,
       `Capacity:      ${node.spec.capacity.pods} pods`,
       `Allocated:     ${podsOnNode.length} pods`,
       `Pods:          ${podsOnNode.map((p) => p.metadata.name).join(', ') || '<none>'}`,
     ];
+    return lines;
   }
 
   if (cmd.resourceType === 'service') {
@@ -1513,6 +1558,57 @@ function handleDescribe(cmd: ParsedCommand): string[] {
     ];
   }
 
+  if (cmd.resourceType === 'ingress') {
+    const ing = store.cluster.ingresses.find((i) => i.metadata.name === cmd.resourceName);
+    if (!ing) return [`Error: ingress "${cmd.resourceName}" not found`];
+    const lines = [
+      `Name:          ${ing.metadata.name}`,
+      `Address:       ${ing.status.loadBalancer?.ip || '<pending>'}`,
+      `Rules:`,
+    ];
+    for (const rule of ing.spec.rules) {
+      lines.push(`  Host: ${rule.host}`);
+      lines.push(`    ${rule.path} → ${rule.serviceName}:${rule.servicePort}`);
+    }
+    return lines;
+  }
+
+  if (cmd.resourceType === 'cronjob') {
+    const cj = store.cluster.cronJobs.find((c) => c.metadata.name === cmd.resourceName);
+    if (!cj) return [`Error: cronjob "${cmd.resourceName}" not found`];
+    return [
+      `Name:          ${cj.metadata.name}`,
+      `Schedule:      ${cj.spec.schedule}`,
+      `Active:        ${cj.status.active}`,
+      `Last Schedule: ${cj.status.lastScheduleTime ? `tick ${cj.status.lastScheduleTime}` : '<none>'}`,
+      `Image:         ${cj.spec.jobTemplate.spec.template.spec.image}`,
+    ];
+  }
+
+  if (cmd.resourceType === 'hpa' || cmd.resourceType === 'horizontalpodautoscaler') {
+    const hpa = store.cluster.hpas.find((h) => h.metadata.name === cmd.resourceName);
+    if (!hpa) return [`Error: hpa "${cmd.resourceName}" not found`];
+    return [
+      `Name:          ${hpa.metadata.name}`,
+      `Reference:     ${hpa.spec.scaleTargetRef.kind}/${hpa.spec.scaleTargetRef.name}`,
+      `Min Replicas:  ${hpa.spec.minReplicas}`,
+      `Max Replicas:  ${hpa.spec.maxReplicas}`,
+      `Target CPU:    ${hpa.spec.targetCPUUtilizationPercentage}%`,
+      `Current CPU:   ${hpa.status.currentCPUUtilizationPercentage !== undefined ? `${hpa.status.currentCPUUtilizationPercentage}%` : '<unknown>'}`,
+      `Replicas:      ${hpa.status.currentReplicas} current / ${hpa.status.desiredReplicas} desired`,
+    ];
+  }
+
+  if (cmd.resourceType === 'namespace') {
+    const ns = store.cluster.namespaces.find((n) => n.metadata.name === cmd.resourceName);
+    if (!ns) return [`Error: namespace "${cmd.resourceName}" not found`];
+    return [
+      `Name:          ${ns.metadata.name}`,
+      `Status:        ${ns.status.phase}`,
+      `Labels:        ${Object.entries(ns.metadata.labels).map(([k, v]) => `${k}=${v}`).join(', ') || '<none>'}`,
+    ];
+  }
+
   return [`Error: Cannot describe resource type "${cmd.resourceType}"`];
 }
 
@@ -1539,6 +1635,54 @@ function handleRolloutStatus(cmd: ParsedCommand): string[] {
   ];
 }
 
+function handleRolloutRestart(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  if (cmd.resourceType !== 'deployment') {
+    return ['Error: rollout restart only supports deployments.'];
+  }
+  const dep = store.cluster.deployments.find(
+    (d) => d.metadata.name === cmd.resourceName
+  );
+  if (!dep) return [`Error: deployment "${cmd.resourceName}" not found`];
+
+  // Find the active ReplicaSet
+  const rs = store.cluster.replicaSets.find(
+    (r) => r.metadata.ownerReference?.uid === dep.metadata.uid && !r.metadata.deletionTimestamp
+  );
+
+  // Delete all pods owned by this deployment's RS — RS controller will recreate them
+  const pods = store.cluster.pods.filter(
+    (p) =>
+      rs && p.metadata.ownerReference?.uid === rs.metadata.uid &&
+      !p.metadata.deletionTimestamp
+  );
+
+  for (const pod of pods) {
+    store.removePod(pod.metadata.uid);
+    store.addEvent({
+      timestamp: Date.now(),
+      tick: store.cluster.tick,
+      type: 'Normal',
+      reason: 'Killing',
+      objectKind: 'Pod',
+      objectName: pod.metadata.name,
+      message: `Deleted pod "${pod.metadata.name}" (rollout restart)`,
+    });
+  }
+
+  store.addEvent({
+    timestamp: Date.now(),
+    tick: store.cluster.tick,
+    type: 'Normal',
+    reason: 'RolloutRestart',
+    objectKind: 'Deployment',
+    objectName: cmd.resourceName,
+    message: `Restarted deployment "${cmd.resourceName}"`,
+  });
+
+  return [`deployment.apps/${cmd.resourceName} restarted`];
+}
+
 function handleCordon(cmd: ParsedCommand, uncordon: boolean): string[] {
   const store = useSimulatorStore.getState();
   if (!cmd.resourceName) {
@@ -1552,28 +1696,27 @@ function handleCordon(cmd: ParsedCommand, uncordon: boolean): string[] {
     return [`Error: node "${cmd.resourceName}" not found`];
   }
 
-  const newStatus = uncordon ? 'True' : 'False';
-  const currentStatus = node.status.conditions[0].status;
+  const isCurrentlyUnschedulable = !!node.spec.unschedulable;
 
-  if (currentStatus === newStatus) {
-    return [`node "${cmd.resourceName}" is already ${uncordon ? 'uncordoned' : 'cordoned'}`];
+  if (uncordon && !isCurrentlyUnschedulable) {
+    return [`node "${cmd.resourceName}" is already uncordoned`];
+  }
+  if (!uncordon && isCurrentlyUnschedulable) {
+    return [`node "${cmd.resourceName}" is already cordoned`];
   }
 
   store.updateNode(node.metadata.uid, {
-    status: {
-      ...node.status,
-      conditions: [{ type: 'Ready' as const, status: newStatus as 'True' | 'False' }],
-    },
+    spec: { ...node.spec, unschedulable: !uncordon },
   });
 
   store.addEvent({
     timestamp: Date.now(),
     tick: store.cluster.tick,
     type: uncordon ? 'Normal' : 'Warning',
-    reason: uncordon ? 'NodeReady' : 'NodeNotReady',
+    reason: uncordon ? 'NodeSchedulable' : 'NodeUnschedulable',
     objectKind: 'Node',
     objectName: cmd.resourceName,
-    message: `Node "${cmd.resourceName}" marked as ${uncordon ? 'Ready' : 'NotReady'}`,
+    message: `Node "${cmd.resourceName}" ${uncordon ? 'uncordoned (schedulable)' : 'cordoned (unschedulable)'}`,
   });
 
   return [`node/${cmd.resourceName} ${uncordon ? 'uncordoned' : 'cordoned'}`];
@@ -2324,13 +2467,9 @@ function handleDrain(cmd: ParsedCommand): string[] {
     return [`Error: node "${cmd.resourceName}" not found`];
   }
 
-  // Cordon the node (mark unschedulable)
+  // Cordon the node (mark unschedulable) — drain does NOT change Ready status
   store.updateNode(node.metadata.uid, {
     spec: { ...node.spec, unschedulable: true },
-    status: {
-      ...node.status,
-      conditions: [{ type: 'Ready' as const, status: 'False' as const }],
-    },
   });
 
   // Evict all non-DaemonSet pods on this node, respecting PDBs

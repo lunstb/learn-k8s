@@ -96,6 +96,10 @@ export const lessonWhyK8s: Lesson = {
           'Each machine in the cluster needs a name — that\'s a Node. Nodes provide the CPU, memory, and disk that containers need to run.\n\n' +
           'Containers need a wrapper that gives them shared networking and storage — that\'s a Pod. A pod is the smallest thing you deploy. Most pods run one container, but sometimes you need a helper (like a logging sidecar) that shares the same network, so they go in the same pod.\n\n' +
           'Something needs to watch pods and replace them when they crash — that\'s a Controller. Specifically, a ReplicaSet is a controller that maintains a desired count of identical pods. It creates pods when there are too few and deletes them when there are too many.\n\n' +
+          'Pods go through lifecycle phases that tell you their status: Pending (waiting for a node or images — ' +
+          'if a pod stays Pending, no node has sufficient capacity or the image cannot be pulled), ' +
+          'Running (containers are executing), Succeeded (completed normally), and Failed (something went wrong). ' +
+          'These phases are your first diagnostic clue.\n\n' +
           'The act of making actual state match desired state has a name too — that\'s Reconciliation. Every time a controller runs its loop and fixes a gap, that\'s reconciliation.',
         keyTakeaway:
           'Every K8s term is a solution to a problem. Cluster = "the whole system." Node = "a machine." Pod = "container wrapper." Controller = "the thing that watches and fixes." If you know the problem, you know the term.',

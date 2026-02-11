@@ -377,3 +377,98 @@ code.inline-code {
   background: #16a34a;
   filter: brightness(1.1);
 }
+
+/* === Responsive: Lesson Content === */
+@media (max-width: 768px) {
+  .lesson-content-scroll {
+    padding: 24px 20px;
+  }
+
+  .lecture-header h2 {
+    font-size: 1.3rem;
+  }
+
+  .lecture-section h3 {
+    font-size: 1rem;
+  }
+
+  .lecture-section-content {
+    font-size: 0.85rem;
+  }
+
+  .lecture-diagram {
+    font-size: 0.68rem;
+    padding: 10px 12px;
+  }
+
+  .lesson-content-actions {
+    padding: 16px 20px;
+  }
+
+  .quiz-question {
+    font-size: 0.95rem;
+  }
+
+  .quiz-choice {
+    padding: 10px 12px;
+    font-size: 0.82rem;
+  }
+
+  .quiz-score-value {
+    font-size: 2rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .lesson-content-scroll {
+    padding: 16px 12px;
+  }
+
+  .lecture-header h2 {
+    font-size: 1.1rem;
+  }
+
+  .lecture-section {
+    margin-bottom: 20px;
+  }
+
+  .lecture-section-content {
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+
+  .lecture-code {
+    font-size: 0.7rem;
+    padding: 8px 10px;
+  }
+
+  .lecture-diagram {
+    font-size: 0.6rem;
+    padding: 8px 10px;
+    overflow-x: scroll;
+  }
+
+  .lecture-takeaway {
+    font-size: 0.8rem;
+    padding: 10px 12px;
+  }
+
+  .lesson-content-actions {
+    padding: 12px;
+  }
+
+  .btn-continue {
+    width: 100%;
+    text-align: center;
+  }
+
+  .btn-start-practice {
+    width: 100%;
+  }
+
+  .quiz-choice {
+    padding: 8px 10px;
+    font-size: 0.78rem;
+    gap: 8px;
+  }
+}

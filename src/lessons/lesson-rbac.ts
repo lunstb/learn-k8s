@@ -119,10 +119,16 @@ export const lessonRBAC: Lesson = {
           'Anti-patterns to avoid:\n' +
           '- Giving cluster-admin to all developers\n' +
           '- Using the default ServiceAccount for workloads\n' +
-          '- Creating ClusterRoleBindings when namespace-scoped RoleBindings suffice\n' +
-          '- Granting wildcard (*) verbs or resources',
+          '- Granting wildcard (*) verbs or resources\n\n' +
+          'Choosing the right scope:\n' +
+          'If a subject needs access to only some namespaces, use RoleBindings per namespace — this is more restrictive. ' +
+          'But if a subject legitimately needs the same access across ALL namespaces (like an oncall team reading pods everywhere, ' +
+          'or a monitoring system scraping metrics cluster-wide), a ClusterRoleBinding is the right tool. ' +
+          'It is also more maintainable: when new namespaces are added, access is granted automatically without creating new RoleBindings. ' +
+          'The anti-pattern is using ClusterRoleBindings for access that should be limited to specific namespaces — not using them ' +
+          'for genuinely cluster-wide needs.',
         keyTakeaway:
-          'Least privilege: grant only what is needed, nothing more. Namespace-scoped Roles over ClusterRoles. Dedicated ServiceAccounts over defaults. Specific verbs over wildcards.',
+          'Least privilege: grant only what is needed, nothing more. Use RoleBindings for namespace-specific access. Use ClusterRoleBindings when access is genuinely needed across all namespaces. Dedicated ServiceAccounts over defaults.',
       },
     ],
   },
@@ -191,9 +197,9 @@ export const lessonRBAC: Lesson = {
       explanation:
         'Since the "oncall" group needs the same pod-read access in ALL namespaces, a single ClusterRoleBinding with a ' +
         'ClusterRole is the most maintainable solution. When a new namespace is added, it is automatically covered. ' +
-        'Option C (ClusterRole + per-namespace RoleBindings) is correct but more work to maintain and only preferred when ' +
-        'you need different access levels per namespace. Option B duplicates Role definitions. Option D violates least ' +
-        'privilege catastrophically.',
+        'Option B (ClusterRole + per-namespace RoleBindings) also works but requires creating a new RoleBinding for each new namespace — ' +
+        'preferred when you need different access levels per namespace. Option A duplicates Role definitions across every namespace. ' +
+        'Option D describes a non-standard pattern that adds unnecessary complexity.',
     },
   ],
 };

@@ -9,7 +9,7 @@ export const lessonCapstoneTroubleshooting: Lesson = {
     'Put everything together by diagnosing and fixing a broken cluster with multiple simultaneous issues.',
   mode: 'full',
   goalDescription:
-    'Find and fix all issues: the frontend needs 3 Running pods, the backend has an image typo ("nignx:2.0"), the backend-svc has the wrong selector, and one node is cordoned. All deployments healthy, all services with endpoints, all nodes Ready.',
+    'Find and fix all issues: the frontend needs 3 Running pods, the backend has an image typo ("nignx:2.0"), the backend-svc has the wrong selector, and one node is cordoned. All deployments healthy, all services with endpoints, all nodes schedulable.',
   successMessage:
     'Congratulations! You diagnosed and fixed: under-replicated frontend, image typo on backend, ' +
     'wrong selector on backend-svc, and cordoned node.',
@@ -17,10 +17,10 @@ export const lessonCapstoneTroubleshooting: Lesson = {
     { text: 'Start with kubectl get pods to identify which pods are not Running.' },
     { text: 'Check events with kubectl get events for error details.' },
     { text: 'The backend deployment has an image typo — look at the image name carefully.' },
-    { text: 'kubectl set image deployment/backend nginx:2.0', exact: true },
+    { text: 'kubectl set image deployment/backend backend=nginx:2.0', exact: true },
     { text: 'The backend-svc selector doesn\'t match the backend pods. Compare labels.' },
     { text: 'kubectl patch service backend-svc --selector=app=backend', exact: true },
-    { text: 'One node is cordoned. Use kubectl get nodes to find it, then uncordon it.' },
+    { text: 'One node is cordoned (SchedulingDisabled). Use kubectl get nodes to find it, then uncordon it.' },
   ],
   goals: [
     {
@@ -38,8 +38,8 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       },
     },
     {
-      description: 'Uncordon the NotReady node',
-      check: (s: ClusterState) => s.nodes.every(n => n.status.conditions[0].status === 'True'),
+      description: 'Uncordon the cordoned node',
+      check: (s: ClusterState) => s.nodes.every(n => !n.spec.unschedulable),
     },
     {
       description: '3 Running frontend pods and 3 Running backend pods',
@@ -77,7 +77,7 @@ export const lessonCapstoneTroubleshooting: Lesson = {
           '2. `kubectl get events` \u2014 any Warning events? These point directly to root causes.\n\n' +
           '3. `kubectl get deployments` \u2014 replica mismatch? Compare DESIRED vs READY columns.\n\n' +
           '4. `kubectl get services` \u2014 endpoint count = 0? The selector doesn\'t match any Running pods.\n\n' +
-          '5. `kubectl get nodes` \u2014 any NotReady or cordoned? Nodes that can\'t accept pods explain scheduling failures.\n\n' +
+          '5. `kubectl get nodes` \u2014 any NotReady or SchedulingDisabled? Nodes that can\'t accept pods explain scheduling failures.\n\n' +
           '6. `kubectl describe <resource>` \u2014 drill into any specific resource for conditions, events, and config.\n\n' +
           '7. Fix and Reconcile \u2014 always verify your fix worked.',
         keyTakeaway:
@@ -139,9 +139,9 @@ export const lessonCapstoneTroubleshooting: Lesson = {
     },
     {
       question:
-        'You are troubleshooting a cluster and find: frontend deployment has 1/3 pods running, backend pods show ImagePullError, one node is NotReady. You only have time to fix one thing first. Which fix restores the most user-facing functionality?',
+        'You are troubleshooting a cluster and find: frontend deployment has 1/3 pods running, backend pods show ImagePullError, one node is cordoned (SchedulingDisabled). You only have time to fix one thing first. Which fix restores the most user-facing functionality?',
       choices: [
-        'Uncordon the NotReady node to restore scheduling capacity for all pending pods',
+        'Uncordon the cordoned node to restore scheduling capacity for all pending pods',
         'Scale the frontend deployment down to 1 replica to match available node capacity',
         'Delete and recreate both deployments to force a clean state across the entire cluster',
         'Fix the backend image name so backend pods can start and restore that application tier',
@@ -245,7 +245,7 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       status: { phase: 'Pending' as const, reason: 'ImagePullError', message: 'Failed to pull image "nignx:2.0"' },
     }));
 
-    // Nodes -- node-3 is cordoned/NotReady
+    // Nodes -- node-3 is cordoned (Ready but unschedulable)
     const nodeNames = ['node-1', 'node-2', 'node-3'];
     const nodes = nodeNames.map((name, i) => ({
       kind: 'Node' as const,
@@ -255,11 +255,11 @@ export const lessonCapstoneTroubleshooting: Lesson = {
         labels: { 'kubernetes.io/hostname': name },
         creationTimestamp: Date.now() - 300000,
       },
-      spec: { capacity: { pods: 4 } },
+      spec: { capacity: { pods: 4 }, ...(i === 2 ? { unschedulable: true } : {}) },
       status: {
         conditions: [{
           type: 'Ready' as const,
-          status: (i === 2 ? 'False' : 'True') as 'True' | 'False',
+          status: 'True' as 'True' | 'False',
         }] as [{ type: 'Ready'; status: 'True' | 'False' }],
         allocatedPods: i === 2 ? 0 : 2,
       },
@@ -447,11 +447,11 @@ export const lessonCapstoneTroubleshooting: Lesson = {
     if (!frontendSvc || frontendSvc.status.endpoints.length === 0) return false;
     if (!backendSvc || backendSvc.status.endpoints.length === 0) return false;
 
-    // All nodes Ready
-    const allNodesReady = state.nodes.every(
-      (n) => n.status.conditions[0].status === 'True'
+    // All nodes schedulable
+    const allNodesSchedulable = state.nodes.every(
+      (n) => n.status.conditions[0].status === 'True' && !n.spec.unschedulable
     );
 
-    return allNodesReady;
+    return allNodesSchedulable;
   },
 };

@@ -24,7 +24,7 @@ export const lessonReplicaSets: Lesson = {
       description: 'Scale "my-app" up to 5 replicas',
       check: (s: ClusterState) => {
         const dep = s.deployments.find(d => d.metadata.name === 'my-app');
-        return !!dep && dep.spec.replicas >= 5 || s.pods.filter(p => p.metadata.labels['app'] === 'my-app' && !p.metadata.deletionTimestamp).length >= 5;
+        return !!dep && dep.spec.replicas >= 5;
       },
     },
     {
@@ -65,6 +65,9 @@ export const lessonReplicaSets: Lesson = {
           'The answer is labels — key-value pairs attached to every resource. A ReplicaSet with ' +
           'selector `app=web` watches all pods carrying that label. This is deliberate loose coupling: ' +
           'the RS doesn\'t care about pod names, creation order, or IPs. It only checks labels.\n\n' +
+          'When a selector has multiple labels (e.g., app=web AND version=v2), ALL labels must match — ' +
+          'this is AND logic. A pod with app=web but version=v1 does not match. Extra labels on the pod are ignored; ' +
+          'only the selector keys matter.\n\n' +
           'This design has a surprising consequence: if you manually create a pod with matching labels, ' +
           'the RS counts it as one of its own. If that makes the count exceed the desired number, ' +
           'the RS deletes the extra. The selector is the contract between a controller and its pods.',

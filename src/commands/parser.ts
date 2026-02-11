@@ -62,6 +62,9 @@ const RESOURCE_ALIASES: Record<string, string> = {
   pdb: 'pdb',
   poddisruptionbudget: 'pdb',
   poddisruptionbudgets: 'pdb',
+  endpoints: 'endpoints',
+  endpoint: 'endpoints',
+  ep: 'endpoints',
 };
 
 export function parseCommand(input: string): ParsedCommand | { error: string } {
@@ -182,6 +185,37 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
 
   // Handle "rollout" command
   if (action === 'rollout') {
+    if (idx < parts.length && parts[idx].toLowerCase() === 'restart') {
+      idx++;
+      if (idx >= parts.length) {
+        return { error: 'Usage: kubectl rollout restart deployment/<name>' };
+      }
+      const resourcePart = parts[idx];
+      let resourceType: string;
+      let resourceName: string;
+
+      if (resourcePart.includes('/')) {
+        const [type, name] = resourcePart.split('/');
+        const normalizedType = RESOURCE_ALIASES[type.toLowerCase()];
+        if (!normalizedType) return { error: `Unknown resource type: ${type}` };
+        resourceType = normalizedType;
+        resourceName = name;
+      } else {
+        const normalizedType = RESOURCE_ALIASES[resourcePart.toLowerCase()];
+        if (!normalizedType) return { error: `Unknown resource type: ${resourcePart}` };
+        resourceType = normalizedType;
+        idx++;
+        if (idx >= parts.length) return { error: 'Missing resource name.' };
+        resourceName = parts[idx];
+      }
+
+      return {
+        action: 'rollout-restart',
+        resourceType,
+        resourceName,
+        flags: {},
+      };
+    }
     if (idx < parts.length && parts[idx].toLowerCase() === 'status') {
       idx++;
       if (idx >= parts.length) {
@@ -213,7 +247,7 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
         flags: {},
       };
     }
-    return { error: 'Unknown rollout subcommand. Supported: rollout status' };
+    return { error: 'Unknown rollout subcommand. Supported: rollout status, rollout restart' };
   }
 
   // Handle "logs" command: kubectl logs <pod-name> [--tail=N]
@@ -435,7 +469,7 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
     return { error: unsupportedCommands[action] };
   }
   if (!validActions.includes(action)) {
-    return { error: `Unknown command: "${action}". Supported: create, get, delete, scale, set image, describe, logs, apply, patch, label, drain, taint, cordon, uncordon, autoscale, rollout, top, helm` };
+    return { error: `Unknown command: "${action}". Supported: create, get, delete, scale, set image, describe, logs, apply, patch, label, drain, taint, cordon, uncordon, autoscale, rollout, helm` };
   }
 
   // Handle "apply -f -" pattern
@@ -487,7 +521,7 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
   } else {
     const normalizedType = RESOURCE_ALIASES[resourcePart.toLowerCase()];
     if (!normalizedType) {
-      return { error: `Unknown resource type: "${resourcePart}". Available: deployment (deploy), replicaset (rs), pod (po), node (no), service (svc), event (ev), namespace (ns), configmap (cm), secret, ingress (ing), statefulset (sts), daemonset (ds), job, cronjob (cj), hpa, pv, pvc, storageclass (sc)` };
+      return { error: `Unknown resource type: "${resourcePart}". Available: deployment (deploy), replicaset (rs), pod (po), node (no), service (svc), endpoints (ep), event (ev), namespace (ns), configmap (cm), secret, ingress (ing), statefulset (sts), daemonset (ds), job, cronjob (cj), hpa, pv, pvc, storageclass (sc)` };
     }
     resourceType = normalizedType;
     idx++;
