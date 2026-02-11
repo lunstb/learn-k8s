@@ -76,13 +76,19 @@ function parseInlineFormatting(text: string): ReactNode[] {
 
 function renderLectureContent(content: string): ReactNode[] {
   const lines = content.split('\n');
-  const blocks: { type: 'prose' | 'code'; text: string }[] = [];
+  const blocks: { type: 'prose' | 'code' | 'list'; text: string; items?: string[] }[] = [];
   let currentLines: string[] = [];
-  let currentType: 'prose' | 'code' | null = null;
+  let currentType: 'prose' | 'code' | 'list' | null = null;
+
+  const isListLine = (line: string) => /^\d+\.\s/.test(line) || /^[-*]\s/.test(line);
 
   const flush = () => {
     if (currentType && currentLines.length > 0) {
-      blocks.push({ type: currentType, text: currentLines.join('\n') });
+      if (currentType === 'list') {
+        blocks.push({ type: 'list', text: '', items: [...currentLines] });
+      } else {
+        blocks.push({ type: currentType, text: currentLines.join('\n') });
+      }
     }
     currentLines = [];
     currentType = null;
@@ -94,7 +100,14 @@ function renderLectureContent(content: string): ReactNode[] {
       continue;
     }
 
-    const type = line.startsWith('  ') ? 'code' : 'prose';
+    let type: 'prose' | 'code' | 'list';
+    if (line.startsWith('  ')) {
+      type = 'code';
+    } else if (isListLine(line)) {
+      type = 'list';
+    } else {
+      type = 'prose';
+    }
     if (type !== currentType) {
       flush();
     }
@@ -106,6 +119,16 @@ function renderLectureContent(content: string): ReactNode[] {
   return blocks.map((block, i) => {
     if (block.type === 'code') {
       return <pre key={i} className="lecture-code">{block.text}</pre>;
+    }
+    if (block.type === 'list' && block.items) {
+      const isOrdered = /^\d+\.\s/.test(block.items[0]);
+      const listItems = block.items.map((item, j) => {
+        const text = item.replace(/^\d+\.\s/, '').replace(/^[-*]\s/, '');
+        return <li key={j}>{parseInlineFormatting(text)}</li>;
+      });
+      return isOrdered
+        ? <ol key={i} className="lecture-list">{listItems}</ol>
+        : <ul key={i} className="lecture-list">{listItems}</ul>;
     }
     return <p key={i} className="lecture-prose">{parseInlineFormatting(block.text)}</p>;
   });

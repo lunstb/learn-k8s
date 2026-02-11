@@ -107,12 +107,12 @@ export const lessonWhyK8s: Lesson = {
       question:
         'A ReplicaSet is configured with replicas=3 and all 3 pods are Running. One pod crashes at 3 AM. What happens next?',
       choices: [
-        'Kubernetes restarts the crashed pod on the same node with the same IP address',
-        'The ReplicaSet waits for an administrator to acknowledge the failure before acting',
         'The control loop detects 2 Running vs 3 desired and creates a brand-new replacement pod',
+        'Kubernetes restarts the crashed pod on the same node with the same IP address',
         'The desired state is automatically reduced to 2 to match the current state',
+        'The ReplicaSet pauses reconciliation until the next scheduled sync interval at 5-minute boundaries',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
         'The ReplicaSet controller does not restart the old pod — it creates an entirely new pod. The crashed pod is gone forever. ' +
         'This is a key distinction: Kubernetes replaces, it does not repair. The new pod gets a new name, new IP, ' +
@@ -123,12 +123,12 @@ export const lessonWhyK8s: Lesson = {
         'Your team writes a shell script that checks pod count every 30 seconds and creates replacements if any are missing. ' +
         'How does the Kubernetes declarative approach differ from this?',
       choices: [
-        'Kubernetes does the same thing but checks more frequently',
-        'The script is imperative — it encodes HOW to recover; Kubernetes is declarative — you specify WHAT state you want and controllers continuously reconcile toward it',
-        'Kubernetes only checks pod count on a schedule, just like the script',
-        'There is no practical difference — both achieve the same reliability guarantees',
+        'Kubernetes does the same thing but with a built-in scheduler that checks more frequently than 30 seconds',
+        'Kubernetes only checks pod count on a fixed schedule, just like the script, but uses etcd for persistence',
+        'The script is imperative and encodes recovery steps; Kubernetes is declarative and continuously reconciles toward a desired state',
+        'The script handles edge cases better because you can customize the recovery logic for each failure mode',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
         'The script is fragile: it can crash, it handles only the scenarios you coded, and it requires you to write recovery logic for every edge case. ' +
         'Kubernetes controllers are built into the system, always running, and handle any deviation from desired state — not just the scenarios you anticipated. ' +
@@ -138,12 +138,12 @@ export const lessonWhyK8s: Lesson = {
       question:
         'You have a ReplicaSet with replicas=3. Currently there are 5 pods matching its selector (someone manually created 2 extra). What does the controller do?',
       choices: [
-        'It ignores the extra pods since it did not create them',
-        'It creates 3 more pods for a total of 8, since replicas=3 means "add 3"',
-        'It deletes 2 pods to bring the count down to the desired 3',
-        'It crashes because the state is inconsistent',
+        'It adopts the extra pods and updates its desired count to 5 to match the actual state',
+        'It deletes 2 pods to bring the count down to the desired 3, regardless of who created them',
+        'It creates 3 more pods for a total of 8, since replicas=3 means "add 3 to whatever exists"',
+        'It ignores the extra pods because they lack the correct ownerReference metadata',
       ],
-      correctIndex: 2,
+      correctIndex: 1,
       explanation:
         'The ReplicaSet controller reconciles in both directions. It does not just create missing pods — it also removes excess ones. ' +
         'The controller counts all pods matching its selector, regardless of who created them. If actual (5) > desired (3), it terminates the surplus. ' +
@@ -153,9 +153,9 @@ export const lessonWhyK8s: Lesson = {
       question:
         'A pod is stuck in Pending phase for 10 minutes. Which of these is a plausible explanation?',
       choices: [
-        'The container image is crashing on startup',
-        'Pending pods automatically terminate after 5 minutes, so this scenario is impossible',
-        'The pod\'s ReplicaSet has been deleted',
+        'The container image is crashing on startup, causing the pod to remain in Pending indefinitely',
+        'The pod\'s ownerReference is invalid, so the scheduler refuses to place it on any node',
+        'The pod was assigned to a node but the kubelet has not reported back its Running status yet',
         'No node in the cluster has sufficient available capacity to schedule the pod',
       ],
       correctIndex: 3,

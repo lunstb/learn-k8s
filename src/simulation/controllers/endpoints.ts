@@ -12,11 +12,12 @@ export function reconcileEndpoints(cluster: ClusterState): EndpointsResult {
   const currentTick = cluster.tick;
 
   for (const svc of cluster.services) {
-    // Find pods matching selector that are Running
+    // Find pods matching selector that are Running and ready
     const matchingPods = cluster.pods.filter(
       (p) =>
         !p.metadata.deletionTimestamp &&
         p.status.phase === 'Running' &&
+        p.status.ready !== false &&
         labelsMatch(svc.spec.selector, p.metadata.labels)
     );
 

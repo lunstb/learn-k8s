@@ -147,10 +147,10 @@ spec:
       question:
         'A StatefulSet "mysql" has 3 replicas (mysql-0, mysql-1, mysql-2). The pod mysql-1 crashes due to an OOM error and is terminated. What name does the replacement pod get?',
       choices: [
-        'mysql-3, because Kubernetes always increments the ordinal for new pods',
+        'mysql-3 — the StatefulSet always increments the ordinal when creating new pods, even as replacements for crashed ones',
         'mysql-1 — the StatefulSet recreates the pod with the exact same ordinal name and reattaches its persistent volume',
-        'A random name like mysql-7f8c9d-x4k2p, similar to Deployment pods',
-        'The StatefulSet waits for manual intervention before creating a replacement since data integrity is at risk',
+        'A random hash name like mysql-7f8c9d-x4k2p, using the same naming convention that Deployments use for their pods',
+        'The ordinal is reassigned based on which node has the most available resources, so it may get any ordinal from 0 to 2',
       ],
       correctIndex: 1,
       explanation:
@@ -162,10 +162,10 @@ spec:
       question:
         'You scale a StatefulSet "mysql" from 5 replicas down to 3. Pods mysql-4 and mysql-3 are terminated. What happens to the PersistentVolumeClaims data-mysql-3 and data-mysql-4?',
       choices: [
-        'They are automatically deleted along with the pods to free up storage resources',
-        'They are migrated to the remaining pods (mysql-0, mysql-1, mysql-2) as additional storage',
-        'They are marked for garbage collection and deleted after 24 hours if the StatefulSet is not scaled back up',
-        'They are retained — Kubernetes does not delete PVCs from StatefulSets on scale-down, preserving the data in case you scale back up',
+        'They are automatically deleted along with the pods to free up storage resources and reduce cloud costs',
+        'They are redistributed and merged into the volumes of the remaining pods (mysql-0, mysql-1, mysql-2)',
+        'They are marked for garbage collection and deleted after a configurable grace period if the StatefulSet is not scaled back up',
+        'They are retained — Kubernetes does not delete StatefulSet PVCs on scale-down, preserving data for potential scale-up',
       ],
       correctIndex: 3,
       explanation:
@@ -177,10 +177,10 @@ spec:
       question:
         'A MySQL cluster uses a StatefulSet. The primary (mysql-0) must be running before replicas (mysql-1, mysql-2) can start replication. Why does StatefulSet ordered creation matter here, and what would happen if pods started simultaneously like a Deployment?',
       choices: [
-        'If replicas start before the primary exists, they fail to connect for replication setup, enter error loops, and may corrupt their initial state — ordered creation ensures the primary is ready first',
-        'Simultaneous startup would work fine but would be slower because all pods compete for resources',
-        'It does not actually matter — MySQL replicas can find the primary through DNS discovery regardless of startup order',
-        'Kubernetes would detect the conflict and automatically delay replica creation even without StatefulSet ordering',
+        'Replicas that start before the primary fail to connect for replication, enter error loops, and may corrupt their initial state',
+        'Simultaneous startup would work fine but would be slower because all pods compete for CPU and memory on the same node',
+        'It does not actually matter because MySQL replicas can discover the primary through DNS once it eventually comes online',
+        'Kubernetes detects the ordering conflict automatically and delays replica creation even without StatefulSet ordering',
       ],
       correctIndex: 0,
       explanation:
@@ -192,10 +192,10 @@ spec:
       question:
         'You need to run a stateless web application where any pod can handle any request and pods do not need persistent storage. A team member suggests using a StatefulSet because "it is more reliable." Why is a Deployment the better choice?',
       choices: [
-        'StatefulSets cannot scale beyond 10 replicas, while Deployments have no limit',
-        'StatefulSets do not support rolling updates, so you cannot deploy new versions without downtime',
-        'StatefulSets create pods sequentially and give each a sticky identity — this adds unnecessary startup latency and operational complexity for an application that does not need stable identity or ordered deployment',
-        'StatefulSets require a headless Service which means you cannot use a load balancer with them',
+        'StatefulSets do not support rolling update strategies, so deploying a new image version always requires full downtime',
+        'StatefulSets require a headless Service for pod DNS, which prevents you from using a ClusterIP Service for load balancing',
+        'StatefulSets create pods sequentially and assign sticky identities, adding unnecessary startup latency and operational overhead',
+        'StatefulSets pin each pod to a specific node permanently, preventing the scheduler from rebalancing workloads across nodes',
       ],
       correctIndex: 2,
       explanation:

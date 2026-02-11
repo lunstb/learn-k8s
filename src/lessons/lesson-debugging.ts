@@ -120,12 +120,12 @@ export const lessonDebugging: Lesson = {
       question:
         'A pod shows status "Running" but you notice restartCount is 47 and climbing. What is most likely happening?',
       choices: [
-        'The pod is healthy -- restartCount is just a cumulative counter from previous deployments',
-        'The container is in a CrashLoopBackOff cycle -- it starts, crashes, and Kubernetes restarts it repeatedly',
-        'The node is unstable and keeps rebooting, causing all pods on it to restart',
-        'A liveness probe is misconfigured and killing an otherwise healthy container',
+        'The node is unstable and keeps rebooting, which causes all pods on that node to restart',
+        'A liveness probe is misconfigured and periodically killing an otherwise healthy container',
+        'The restartCount is a cumulative counter from previous ReplicaSets and does not indicate a problem',
+        'The container is in a CrashLoopBackOff cycle -- it starts, crashes, and gets restarted repeatedly',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'A pod can briefly show "Running" between crashes during CrashLoopBackOff. The status alternates between Running and CrashLoopBackOff as Kubernetes restarts the container with exponential backoff delays (10s, 20s, 40s, up to 5min). A restartCount of 47 means the container has crashed 47 times. Option D is plausible but would typically show in events as "Unhealthy" warnings -- the high restartCount with no liveness probe events points to the app itself crashing.',
     },
@@ -133,10 +133,10 @@ export const lessonDebugging: Lesson = {
       question:
         'You run "kubectl set image deployment/api nginx:2.1" but the rollout stalls. Events show ImagePullError on the new pods. What is happening to production traffic right now?',
       choices: [
-        'Traffic is being dropped because the deployment is in a failed state',
-        'Traffic is being routed to the new broken pods, causing 500 errors',
-        'Traffic continues flowing to the old pods -- they are still running and serving requests',
-        'The Service automatically removes all endpoints until the rollout completes',
+        'Traffic is being dropped because the Deployment enters a failed state during a stalled rollout',
+        'Traffic is being routed to the new broken pods, causing 500 errors for end users',
+        'Traffic continues flowing to the old pods -- they are still running and serving requests normally',
+        'The Service automatically removes all endpoints and pauses routing until the rollout completes',
       ],
       correctIndex: 2,
       explanation:
@@ -146,10 +146,10 @@ export const lessonDebugging: Lesson = {
       question:
         'A pod has been in ImagePullBackOff for 20 minutes. You fix the image tag with "kubectl set image". What do you expect to happen next?',
       choices: [
-        'Nothing -- you need to delete the stuck pods manually before Kubernetes will create new ones',
-        'The deployment controller detects the spec change, creates a new ReplicaSet with the corrected image, and resumes the rolling update',
-        'You must run "kubectl rollout restart" to force Kubernetes to retry the image pull',
-        'The existing pods will automatically update their image in-place without restarting',
+        'Nothing -- you need to delete the stuck pods manually before the Deployment will create new ones',
+        'The Deployment controller detects the spec change, creates a new ReplicaSet with the corrected image, and resumes the rollout',
+        'You must run "kubectl rollout restart" to force the Deployment to retry the image pull on existing pods',
+        'The existing pods automatically re-pull the corrected image and restart their containers in-place',
       ],
       correctIndex: 1,
       explanation:
@@ -159,10 +159,10 @@ export const lessonDebugging: Lesson = {
       question:
         'You see this event: "Back-off restarting failed container." The pod shows CrashLoopBackOff. You run "kubectl logs" and see a Python traceback with "ModuleNotFoundError". What is the root cause?',
       choices: [
-        'The container image is correct but the application code has a missing dependency -- this is an application-level bug, not a Kubernetes issue',
-        'The image was pulled from the wrong registry and is missing Python modules',
-        'Kubernetes failed to mount the required ConfigMap containing the Python module',
-        'The pod needs more memory allocated to install Python dependencies at startup',
+        'The application code has a missing dependency in the container image -- this is a build issue, not a Kubernetes problem',
+        'The image was pulled from the wrong registry and contains a different Python version than expected',
+        'Kubernetes failed to mount the required ConfigMap that should contain the Python module path',
+        'The pod needs a higher memory limit to install Python dependencies during container startup',
       ],
       correctIndex: 0,
       explanation:

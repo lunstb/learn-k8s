@@ -1,7 +1,8 @@
 import { useSimulatorStore } from '../simulation/store';
 import { parseCommand } from './parser';
 import type { ParsedCommand } from './parser';
-import type { Deployment, Pod, Service, Namespace, ConfigMap, Secret, Ingress, StatefulSet, DaemonSet, Job, CronJob, HorizontalPodAutoscaler, StorageClass, PersistentVolume, PersistentVolumeClaim } from '../simulation/types';
+import type { Deployment, Pod, Service, Namespace, ConfigMap, Secret, Ingress, StatefulSet, DaemonSet, Job, CronJob, HorizontalPodAutoscaler, StorageClass, PersistentVolume, PersistentVolumeClaim, PodDisruptionBudget } from '../simulation/types';
+import { labelsMatch } from '../simulation/utils';
 import { generateUID } from '../simulation/utils';
 import { parseYaml, toYaml } from './yaml-parser';
 
@@ -1000,6 +1001,29 @@ function handleGet(cmd: ParsedCommand): string[] {
     return [header, ...rows];
   }
 
+  if (cmd.resourceType === 'pdb') {
+    const pdbList = cmd.resourceName
+      ? store.cluster.podDisruptionBudgets.filter((p) => p.metadata.name === cmd.resourceName)
+      : store.cluster.podDisruptionBudgets;
+    if (cmd.resourceName && pdbList.length === 0) {
+      return [`Error: poddisruptionbudget "${cmd.resourceName}" not found`];
+    }
+    if (pdbList.length === 0) {
+      return ['No pod disruption budgets found.'];
+    }
+    const header = padRow(['NAME', 'MIN AVAILABLE', 'MAX UNAVAILABLE', 'ALLOWED DISRUPTIONS', 'AGE']);
+    const rows = pdbList.map((p) =>
+      padRow([
+        p.metadata.name,
+        p.spec.minAvailable !== undefined ? String(p.spec.minAvailable) : 'N/A',
+        p.spec.maxUnavailable !== undefined ? String(p.spec.maxUnavailable) : 'N/A',
+        String(p.status.disruptionsAllowed),
+        'sim',
+      ])
+    );
+    return [header, ...rows];
+  }
+
   return [`Error: Unknown resource type "${cmd.resourceType}"`];
 }
 
@@ -1383,6 +1407,15 @@ function handleDescribe(cmd: ParsedCommand): string[] {
     if (pod.status.ready !== undefined) {
       lines.push(`Ready:         ${pod.status.ready}`);
     }
+    if (pod.status.initContainerStatuses && pod.status.initContainerStatuses.length > 0) {
+      lines.push(`Init Containers:`);
+      for (const ic of pod.status.initContainerStatuses) {
+        lines.push(`  ${ic.name}:  ${ic.state}`);
+      }
+    }
+    if (pod.spec.startupProbe) {
+      lines.push(`Startup Probe: ${pod.status.startupProbeCompleted ? 'passed' : 'pending'}`);
+    }
     if (eventLines.length > 0) {
       lines.push('Events:', ...eventLines);
     }
@@ -1731,6 +1764,7 @@ function handleApplyYaml(yamlContent: string): string[] {
       case 'storageclass': return applyStorageClass(doc, name);
       case 'persistentvolume': return applyPV(doc, name);
       case 'persistentvolumeclaim': return applyPVC(doc, name);
+      case 'poddisruptionbudget': return applyPDB(doc, name);
       default: return [`Error: Unsupported kind "${doc.kind}" for apply.`];
     }
   } catch (e) {
@@ -1748,7 +1782,7 @@ function extractLabels(metadata: Record<string, unknown>): Record<string, string
   return result;
 }
 
-function extractPodSpec(specObj: Record<string, unknown>): { image: string; readinessProbe?: import('../simulation/types').Probe; livenessProbe?: import('../simulation/types').Probe; envFrom?: { configMapRef?: string; secretRef?: string }[]; resources?: import('../simulation/types').ResourceRequirements; volumes?: Array<{ name: string; persistentVolumeClaim?: { claimName: string } }> } {
+function extractPodSpec(specObj: Record<string, unknown>): { image: string; readinessProbe?: import('../simulation/types').Probe; livenessProbe?: import('../simulation/types').Probe; startupProbe?: import('../simulation/types').Probe; envFrom?: { configMapRef?: string; secretRef?: string }[]; resources?: import('../simulation/types').ResourceRequirements; volumes?: Array<{ name: string; persistentVolumeClaim?: { claimName: string } }>; tolerations?: { key: string; operator?: 'Equal' | 'Exists'; value?: string; effect?: string }[]; initContainers?: { name: string; image: string; failureMode?: 'fail' }[] } {
   const containers = specObj.containers as Array<Record<string, unknown>> | undefined;
   const container = containers?.[0] || specObj;
   const image = String(container.image || 'nginx');
@@ -1792,6 +1826,19 @@ function extractPodSpec(specObj: Record<string, unknown>): { image: string; read
     result.resources = container.resources as import('../simulation/types').ResourceRequirements;
   }
 
+  if (container.startupProbe) {
+    const probe = container.startupProbe as Record<string, unknown>;
+    const httpGet = probe.httpGet as Record<string, unknown> | undefined;
+    result.startupProbe = {
+      type: httpGet ? 'httpGet' : probe.tcpSocket ? 'tcpSocket' : 'exec',
+      path: httpGet ? String(httpGet.path || '/') : undefined,
+      port: httpGet ? Number(httpGet.port || 80) : undefined,
+      initialDelaySeconds: probe.initialDelaySeconds ? Number(probe.initialDelaySeconds) : undefined,
+      periodSeconds: probe.periodSeconds ? Number(probe.periodSeconds) : undefined,
+      failureThreshold: probe.failureThreshold ? Number(probe.failureThreshold) : undefined,
+    };
+  }
+
   if (specObj.volumes) {
     const volArr = specObj.volumes as Array<Record<string, unknown>>;
     result.volumes = volArr.map((v) => {
@@ -1802,6 +1849,25 @@ function extractPodSpec(specObj: Record<string, unknown>): { image: string; read
       }
       return vol;
     });
+  }
+
+  if (specObj.tolerations) {
+    const tolArr = specObj.tolerations as Array<Record<string, unknown>>;
+    result.tolerations = tolArr.map((t) => ({
+      key: String(t.key || ''),
+      operator: (t.operator === 'Exists' ? 'Exists' : 'Equal') as 'Equal' | 'Exists',
+      value: t.value ? String(t.value) : undefined,
+      effect: t.effect ? String(t.effect) : undefined,
+    }));
+  }
+
+  if (specObj.initContainers) {
+    const icArr = specObj.initContainers as Array<Record<string, unknown>>;
+    result.initContainers = icArr.map((ic) => ({
+      name: String(ic.name || 'init'),
+      image: String(ic.image || 'busybox'),
+      failureMode: ic.failureMode === 'fail' ? 'fail' as const : undefined,
+    }));
   }
 
   return result;
@@ -2174,6 +2240,30 @@ function applyPVC(doc: Record<string, unknown>, name: string): string[] {
   return [`persistentvolumeclaim/${name} created`];
 }
 
+function applyPDB(doc: Record<string, unknown>, name: string): string[] {
+  const store = useSimulatorStore.getState();
+  const existing = store.cluster.podDisruptionBudgets.find((p) => p.metadata.name === name);
+  if (existing) return [`poddisruptionbudget.policy/${name} configured (unchanged)`];
+  const spec = doc.spec as Record<string, unknown> || {};
+  const selectorObj = spec.selector as Record<string, unknown> | undefined;
+  const matchLabels = (selectorObj?.matchLabels || {}) as Record<string, string>;
+  const minAvailable = spec.minAvailable !== undefined ? Number(spec.minAvailable) : undefined;
+  const maxUnavailable = spec.maxUnavailable !== undefined ? Number(spec.maxUnavailable) : undefined;
+  const pdb: PodDisruptionBudget = {
+    kind: 'PodDisruptionBudget',
+    metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+    spec: { selector: matchLabels, minAvailable, maxUnavailable },
+    status: { disruptionsAllowed: maxUnavailable ?? 0, currentHealthy: 0, desiredHealthy: 0, expectedPods: 0 },
+  };
+  store.addPDB(pdb);
+  store.addEvent({
+    timestamp: Date.now(), tick: store.cluster.tick,
+    type: 'Normal', reason: 'Created', objectKind: 'PodDisruptionBudget', objectName: name,
+    message: `Created PodDisruptionBudget "${name}"`,
+  });
+  return [`poddisruptionbudget.policy/${name} created`];
+}
+
 function handleLabel(cmd: ParsedCommand): string[] {
   const store = useSimulatorStore.getState();
   if (!cmd.resourceName) {
@@ -2243,15 +2333,60 @@ function handleDrain(cmd: ParsedCommand): string[] {
     },
   });
 
-  // Evict all non-DaemonSet pods on this node
+  // Evict all non-DaemonSet pods on this node, respecting PDBs
   const podsOnNode = store.cluster.pods.filter(
     (p) => p.spec.nodeName === cmd.resourceName && !p.metadata.deletionTimestamp
   );
   const daemonSetUids = new Set(store.cluster.daemonSets.map((ds) => ds.metadata.uid));
   const evicted: string[] = [];
+  const pdbBlocked: string[] = [];
+
   for (const pod of podsOnNode) {
     // Skip DaemonSet pods
     if (pod.metadata.ownerReference && daemonSetUids.has(pod.metadata.ownerReference.uid)) continue;
+
+    // Check PDBs before evicting
+    let blockedByPDB = false;
+    for (const pdb of store.cluster.podDisruptionBudgets) {
+      if (!labelsMatch(pdb.spec.selector, pod.metadata.labels)) continue;
+      // Count healthy pods matching this PDB (across all nodes, not just this one)
+      const healthyPods = store.cluster.pods.filter(
+        (p) =>
+          !p.metadata.deletionTimestamp &&
+          p.status.phase === 'Running' &&
+          labelsMatch(pdb.spec.selector, p.metadata.labels)
+      );
+      const alreadyEvictedCount = evicted.filter((name) => {
+        const evictedPod = podsOnNode.find((p) => p.metadata.name === name);
+        return evictedPod && labelsMatch(pdb.spec.selector, evictedPod.metadata.labels);
+      }).length;
+      const healthyAfterEviction = healthyPods.length - alreadyEvictedCount;
+
+      if (pdb.spec.maxUnavailable !== undefined) {
+        const totalExpected = healthyPods.length;
+        const minRequired = totalExpected - pdb.spec.maxUnavailable;
+        if (healthyAfterEviction - 1 < minRequired) {
+          blockedByPDB = true;
+          break;
+        }
+      } else if (pdb.spec.minAvailable !== undefined) {
+        if (healthyAfterEviction - 1 < pdb.spec.minAvailable) {
+          blockedByPDB = true;
+          break;
+        }
+      }
+    }
+
+    if (blockedByPDB) {
+      pdbBlocked.push(pod.metadata.name);
+      store.addEvent({
+        timestamp: Date.now(), tick: store.cluster.tick,
+        type: 'Warning', reason: 'PDBBlocked', objectKind: 'Pod', objectName: pod.metadata.name,
+        message: `Cannot evict pod "${pod.metadata.name}" — would violate PodDisruptionBudget`,
+      });
+      continue;
+    }
+
     store.removePod(pod.metadata.uid);
     evicted.push(pod.metadata.name);
     store.addEvent({
@@ -2264,14 +2399,19 @@ function handleDrain(cmd: ParsedCommand): string[] {
   store.addEvent({
     timestamp: Date.now(), tick: store.cluster.tick,
     type: 'Warning', reason: 'NodeDrained', objectKind: 'Node', objectName: cmd.resourceName,
-    message: `Node "${cmd.resourceName}" drained, ${evicted.length} pod(s) evicted`,
+    message: `Node "${cmd.resourceName}" drained, ${evicted.length} pod(s) evicted${pdbBlocked.length > 0 ? `, ${pdbBlocked.length} blocked by PDB` : ''}`,
   });
 
   const lines = [`node/${cmd.resourceName} cordoned`];
   for (const name of evicted) {
     lines.push(`evicting pod ${name}`);
   }
-  lines.push(`node/${cmd.resourceName} drained`);
+  for (const name of pdbBlocked) {
+    lines.push(`evicting pod ${name} (blocked by PDB — will retry)`);
+  }
+  lines.push(pdbBlocked.length > 0
+    ? `node/${cmd.resourceName} partially drained (${pdbBlocked.length} pod(s) blocked by PDB)`
+    : `node/${cmd.resourceName} drained`);
   return lines;
 }
 

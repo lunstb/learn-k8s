@@ -116,10 +116,10 @@ export const lessonDeployments: Lesson = {
       question:
         'A Deployment has replicas=3, maxSurge=1, maxUnavailable=0. During a rolling update, what is the minimum number of pods serving traffic at any point?',
       choices: [
-        '0 — during the switchover there is a brief moment with no pods',
-        '2 — one pod can be unavailable during the transition',
-        '4 — maxSurge adds an extra pod, raising the minimum',
-        '3 — maxUnavailable=0 means the full desired count must always be available',
+        '2 — one pod can be temporarily unavailable during the transition between old and new versions',
+        '4 — maxSurge adds an extra pod on top of the desired count, raising the minimum serving pods',
+        '0 — during the switchover there is a brief moment with no pods available to handle requests',
+        '3 — maxUnavailable=0 means the full desired count must always be available during the rollout',
       ],
       correctIndex: 3,
       explanation:
@@ -132,10 +132,10 @@ export const lessonDeployments: Lesson = {
       question:
         'Why do two ReplicaSets coexist during a rolling update, rather than updating pods in the existing ReplicaSet?',
       choices: [
-        'It is a design limitation — Kubernetes plans to support in-place updates in a future version',
-        'Having two ReplicaSets allows instant rollback: if the new version fails, Kubernetes scales the old RS back up instead of recreating everything',
-        'Two ReplicaSets use less memory than modifying pods in a single ReplicaSet',
-        'Kubernetes randomly chooses between one-RS and two-RS strategies based on cluster load',
+        'Pods are immutable, so the old RS must be preserved; but the main reason is that in-place updates would consume more CPU',
+        'Having two ReplicaSets allows instant rollback: if the new version fails, Kubernetes scales the old RS back up without recreating anything',
+        'It is a temporary design limitation that will be replaced by in-place pod updates in a future Kubernetes release',
+        'The controller manager requires separate ReplicaSets to track resource quotas for old and new pod versions independently',
       ],
       correctIndex: 1,
       explanation:
@@ -148,12 +148,12 @@ export const lessonDeployments: Lesson = {
       question:
         'You have a Deployment with replicas=4, maxSurge=2, maxUnavailable=1. What is the maximum total number of pods that can exist during the update?',
       choices: [
-        '4 — the total never exceeds the desired count',
-        '5 — desired plus maxUnavailable',
-        '6 — desired (4) plus maxSurge (2)',
-        '7 — desired plus maxSurge plus maxUnavailable',
+        '6 — the maximum is calculated as desired (4) plus maxSurge (2)',
+        '4 — the total pod count never exceeds the desired replica count during a rollout',
+        '5 — the maximum is calculated as desired count plus maxUnavailable',
+        '7 — the maximum is calculated as desired plus maxSurge plus maxUnavailable combined',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
         'maxSurge controls how many extra pods above the desired count can exist simultaneously. With replicas=4 and maxSurge=2, ' +
         'the maximum total is 4+2=6 pods. Meanwhile, maxUnavailable=1 means at least 3 pods must be available (4-1=3). ' +
@@ -164,10 +164,10 @@ export const lessonDeployments: Lesson = {
       question:
         'Your application writes to a database and the new version expects a column that hasn\'t been added yet. You deploy the new version using the default RollingUpdate strategy. What happens?',
       choices: [
-        'Kubernetes detects the schema mismatch and pauses the rollout automatically',
-        'Kubernetes automatically runs database migrations before starting new pods',
-        'Old-version pods work fine, but new-version pods crash on startup, causing the rollout to stall with mixed versions running simultaneously',
-        'The rollout completes instantly because RollingUpdate skips health checks',
+        'Kubernetes detects the database connection errors and automatically pauses the rollout before any old pods are affected',
+        'The old pods continue to write successfully, while the new pods fail to start and enter CrashLoopBackOff during the migration window',
+        'Old-version pods work fine, but new-version pods crash on startup, causing the rollout to stall with mixed versions running',
+        'The rollout completes successfully because RollingUpdate waits for database readiness before switching traffic to new pods',
       ],
       correctIndex: 2,
       explanation:

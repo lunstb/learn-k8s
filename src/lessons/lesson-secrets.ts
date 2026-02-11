@@ -48,6 +48,16 @@ export const lessonSecrets: Lesson = {
           'a few key differences from ConfigMaps: they are base64-encoded (not encrypted by default, but obscured), ' +
           'they can be restricted with RBAC so only specific pods and users can read them, and they are stored in ' +
           'memory on nodes (tmpfs) rather than being written to disk when mounted as volumes.',
+        diagram:
+          'ConfigMap                    Secret\\n' +
+          '┌────────────────┐          ┌────────────────┐\\n' +
+          '│ Plain text     │          │ Base64 encoded  │\\n' +
+          '│ No RBAC needed │          │ RBAC restricted │\\n' +
+          '│ Stored on disk │          │ tmpfs in memory │\\n' +
+          '│                │          │ Size limit: 1MB │\\n' +
+          '└────────────────┘          └────────────────┘\\n' +
+          '  Use for: config,            Use for: passwords,\\n' +
+          '  feature flags               tokens, TLS certs',
         keyTakeaway:
           'Secrets exist because sensitive data needs different handling than regular config. They provide obscuring, RBAC integration, and in-memory storage that ConfigMaps do not.',
       },
@@ -130,10 +140,10 @@ export const lessonSecrets: Lesson = {
       question:
         'A team stores their database password in a Kubernetes Secret and feels confident it is secure. They have not configured encryption at rest. Is the password actually encrypted in etcd?',
       choices: [
-        'Yes -- Kubernetes Secrets are always encrypted before being written to etcd',
-        'Yes -- the base64 encoding provides sufficient encryption for storage',
-        'No -- Secrets are only base64-encoded by default, which is trivially reversible. Anyone with etcd access can read them.',
-        'No -- but it does not matter because etcd is inaccessible from outside the cluster',
+        'Yes -- Kubernetes encrypts all Secrets with AES-256 before writing them to etcd by default',
+        'Yes -- the base64 encoding provides a layer of encryption sufficient for storage at rest',
+        'No -- Secrets are only base64-encoded by default, which is trivially reversible by anyone with etcd access',
+        'No -- but etcd access requires cluster admin credentials, so base64 is an acceptable security tradeoff',
       ],
       correctIndex: 2,
       explanation:
@@ -143,25 +153,25 @@ export const lessonSecrets: Lesson = {
       question:
         'A developer stores a database password in a ConfigMap instead of a Secret, arguing "it works the same way." What specific security properties are they missing by not using a Secret?',
       choices: [
-        'Secrets can have separate RBAC policies, are stored in tmpfs when volume-mounted (never written to disk on nodes), and can be configured for encryption at rest',
-        'Nothing meaningful -- ConfigMaps and Secrets are stored identically and have the same access controls',
-        'Secrets are encrypted by Kubernetes, while ConfigMaps are not',
-        'Secrets are automatically rotated by Kubernetes, while ConfigMap values are static',
+        'Nothing meaningful -- ConfigMaps and Secrets are stored identically in etcd and have the same access controls',
+        'Secrets are automatically encrypted by Kubernetes at rest, while ConfigMaps are stored in plain text',
+        'Secrets are automatically rotated by Kubernetes on a configurable schedule, unlike static ConfigMap values',
+        'Secrets support separate RBAC policies, use tmpfs for volume mounts (no disk writes), and can be encrypted at rest',
       ],
-      correctIndex: 0,
+      correctIndex: 3,
       explanation:
-        'Secrets provide three specific security advantages over ConfigMaps: (1) RBAC can restrict Secret access separately, so a service account might read ConfigMaps but not Secrets; (2) when mounted as volumes, Secrets use tmpfs (memory-backed filesystem), so they are never written to the node\'s disk -- ConfigMaps are written to disk; (3) Secrets can be configured for encryption at rest via EncryptionConfiguration. Secrets are NOT automatically encrypted (Option B is wrong) and are NOT automatically rotated (Option D is wrong). They are a better-but-not-perfect solution for sensitive data.',
+        'Secrets provide three specific security advantages over ConfigMaps: (1) RBAC can restrict Secret access separately, so a service account might read ConfigMaps but not Secrets; (2) when mounted as volumes, Secrets use tmpfs (memory-backed filesystem), so they are never written to the node\'s disk -- ConfigMaps are written to disk; (3) Secrets can be configured for encryption at rest via EncryptionConfiguration. Secrets are NOT automatically encrypted (Option B is wrong) and are NOT automatically rotated (Option C is wrong). They are a better-but-not-perfect solution for sensitive data.',
     },
     {
       question:
         'You need to pull images from a private Docker registry. Which Secret type should you create, and how does Kubernetes use it?',
       choices: [
-        'Create a kubernetes.io/service-account-token secret and attach it to the default service account in the namespace',
-        'Create a kubernetes.io/dockerconfigjson secret and reference it in the pod spec\'s imagePullSecrets field -- the kubelet uses it to authenticate with the registry',
-        'Create an Opaque secret with the registry URL and password, then reference it in the pod spec as an environment variable',
-        'Create a kubernetes.io/tls secret with the registry certificate and mount it as a volume',
+        'Create an Opaque secret with the registry URL and password, then set it as a container environment variable',
+        'Create a kubernetes.io/tls secret with the registry\'s TLS certificate and mount it as a trusted CA volume',
+        'Create a kubernetes.io/service-account-token secret and link it to the default ServiceAccount in the namespace',
+        'Create a kubernetes.io/dockerconfigjson secret and reference it in imagePullSecrets -- the kubelet uses it to authenticate',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'Private registry authentication uses the dockerconfigjson Secret type, which stores Docker registry credentials in the standard Docker config format. You reference it via imagePullSecrets in the pod spec (or attach it to a ServiceAccount). The kubelet on each node uses these credentials when pulling images. Using an Opaque secret with env vars would not work because the kubelet, not the application, needs the credentials during image pull -- before the container even starts. This is a common configuration that trips up newcomers.',
     },
@@ -169,14 +179,30 @@ export const lessonSecrets: Lesson = {
       question:
         'A security audit reveals that a pod\'s environment variables are being written to application crash dumps, exposing the DB_PASSWORD environment variable sourced from a Secret. What is the recommended fix?',
       choices: [
-        'Enable encryption at rest so the Secret is encrypted in etcd -- this prevents exposure in crash dumps',
-        'Switch from environment variable consumption to volume-mounting the Secret, and update the app to read from the mounted file instead',
-        'Set the Secret to "immutable: true" to prevent it from appearing in crash dumps',
-        'Use a ConfigMap instead, since ConfigMap values are not included in crash dump output',
+        'Switch from env var consumption to volume-mounting the Secret and read the password from the mounted file instead',
+        'Enable encryption at rest so the Secret value is encrypted in etcd, preventing exposure in crash dumps',
+        'Set the Secret to "immutable: true" so that its value cannot be read after initial creation by the pod',
+        'Redeploy the pod with the "secure-env: true" annotation to exclude Secrets from process environment dumps',
+      ],
+      correctIndex: 0,
+      explanation:
+        'Environment variables are part of the process environment and can leak through /proc/*/environ, crash dumps, "docker inspect", and application logs that dump env vars. Volume-mounted Secrets avoid this because the data lives in a tmpfs file, not in the process environment. The application reads the file on demand rather than having the value injected into its memory space at startup. Encryption at rest (Option B) protects data in etcd, not in the running container. Making a Secret immutable (Option C) prevents updates but does not affect crash dump behavior.',
+    },
+    {
+      question:
+        'Your team rotates the database password stored in a Secret. Pods that mount the Secret as a volume see the updated password, but pods that consume it via environment variables still have the old password. Why?',
+      choices: [
+        'Both methods should auto-update -- the env-var pods likely have a stale DNS cache preventing the Secret refresh',
+        'Volume-mounted Secrets are auto-updated by the kubelet, but env vars are set at startup and never change',
+        'Env vars from Secrets require a node reboot to refresh because they are cached in the kubelet\'s memory',
+        'The Secret controller only pushes updates to volume-mounted consumers; env-var consumers must poll manually',
       ],
       correctIndex: 1,
       explanation:
-        'Environment variables are part of the process environment and can leak through /proc/*/environ, crash dumps, "docker inspect", and application logs that dump env vars. Volume-mounted Secrets avoid this because the data lives in a tmpfs file, not in the process environment. The application reads the file on demand rather than having the value injected into its memory space at startup. Encryption at rest (Option A) protects data in etcd, not in the running container. Making a Secret immutable (Option C) prevents updates but does not affect crash dump behavior.',
+        'This is the same behavior as ConfigMaps: volume-mounted Secrets are periodically synced by the kubelet (typically within ~60 seconds). ' +
+        'But environment variables are injected into the container process at startup and are immutable for the lifetime of that container. ' +
+        'To pick up the new password, pods consuming the Secret via env vars must be restarted (e.g., `kubectl rollout restart deployment`). ' +
+        'This is a strong argument for preferring volume mounts over env vars for Secrets that may need rotation.',
     },
   ],
   initialState: () => {

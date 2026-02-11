@@ -169,12 +169,12 @@ spec:
       question:
         'Your team configures a liveness probe that checks database connectivity. The database goes down for 2 minutes due to maintenance. What happens to your application pods?',
       choices: [
-        'Kubernetes restarts all pods whose liveness probes fail, causing a cascading failure — pods restart repeatedly while the database is down',
-        'The pods remain Running and wait for the database to recover, since liveness only checks the container process',
-        'The pods are removed from Service endpoints until the database recovers, then re-added automatically',
-        'Kubernetes pauses the liveness probe checks until the external dependency recovers',
+        'The pods are removed from Service endpoints until the database recovers, then automatically re-added',
+        'The pods remain Running and wait for the database to recover, since liveness only checks process existence',
+        'Kubernetes detects the external dependency failure and suspends liveness probe checks until it returns',
+        'Kubernetes restarts all pods whose liveness probes fail, causing a cascading restart loop during the outage',
       ],
-      correctIndex: 0,
+      correctIndex: 3,
       explanation:
         'This is a classic anti-pattern. Because the liveness probe depends on an external service, a database outage causes ALL pods to fail their liveness checks and get restarted simultaneously. ' +
         'The restarted pods immediately fail again (database is still down), creating a restart loop. Liveness probes should only check internal container health — never external dependencies.',
@@ -183,12 +183,12 @@ spec:
       question:
         'A pod is in Running status, but its readiness probe has been failing for the last 60 seconds. A junior engineer asks if the container will be restarted soon. What is the correct answer?',
       choices: [
-        'Yes — after the failureThreshold is exceeded, the kubelet will restart the container',
-        'Yes — but only after the readiness probe has failed for longer than initialDelaySeconds',
-        'No — a failing readiness probe removes the pod from Service endpoints but never triggers a container restart',
-        'No — readiness probes are only checked during pod startup and have no effect on running containers',
+        'No -- a failing readiness probe removes the pod from Service endpoints but never triggers a restart',
+        'Yes -- after the failureThreshold is exceeded, the kubelet will restart the container automatically',
+        'Yes -- but only after the readiness probe has failed for longer than the initialDelaySeconds window',
+        'No -- readiness probes are only evaluated during pod startup and have no effect on running containers',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
         'This is one of the most common Kubernetes misconceptions. Readiness probes control traffic routing only — a failing readiness probe removes the pod from Service endpoints so it stops receiving traffic, ' +
         'but the container keeps running undisturbed. Only liveness probe failures trigger container restarts. The pod stays Running and can recover on its own.',
@@ -197,12 +197,12 @@ spec:
       question:
         'You deploy a Java application that takes 45 seconds to initialize its Spring context. The liveness probe is configured with initialDelaySeconds=0, periodSeconds=10, and failureThreshold=3. What happens?',
       choices: [
-        'The liveness probe waits for the first successful check before starting the failure counter',
-        'The probe starts immediately, fails 3 times within the first 30 seconds, and Kubernetes kills the container before the app finishes starting — creating a restart loop',
-        'Kubernetes automatically detects that the application is still starting and extends the initial delay',
-        'The failureThreshold of 3 means the container gets 30 seconds (3 x 10s period), which is not quite enough but the probe is lenient during startup',
+        'The liveness probe waits for the first successful check before it begins counting failures',
+        'The failureThreshold of 3 gives the container 30 seconds (3 x 10s), which is close but the probe adds a grace period',
+        'The probe starts immediately, fails 3 times in 30 seconds, and Kubernetes kills the container before startup completes',
+        'Kubernetes detects the application is still initializing and automatically extends the initial delay to match',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
         'With initialDelaySeconds=0, the liveness probe starts checking immediately. The app needs 45 seconds to start, but the probe fails at ~10s, ~20s, and ~30s — hitting failureThreshold=3. ' +
         'Kubernetes kills the container at ~30s, well before the app is ready. The container restarts and the cycle repeats forever. The fix is to set initialDelaySeconds >= 45 or use a startup probe.',
@@ -211,16 +211,32 @@ spec:
       question:
         'You have a web service with both liveness and readiness probes. The readiness probe checks the /ready endpoint (which verifies cache warmup), and the liveness probe checks /healthz (which verifies the event loop is responsive). During a deployment, new pods start but take 20 seconds to warm their cache. What behavior do you observe?',
       choices: [
-        'New pods receive traffic immediately since they are in Running state, causing errors for 20 seconds until the cache warms up',
+        'New pods receive traffic immediately since they are Running, causing errors for 20 seconds during cache warmup',
+        'New pods stay Running but are excluded from Service endpoints during warmup -- users see no errors until readiness passes',
         'New pods are killed and restarted after 20 seconds because both probes fail during cache warmup',
-        'The deployment is blocked entirely until all new pods pass both probes simultaneously',
-        'New pods stay Running but are excluded from the Service endpoints during the 20-second warmup, so users see no errors — traffic only shifts once readiness passes',
+        'The deployment is blocked entirely until all new pods pass both the liveness and readiness probes simultaneously',
       ],
-      correctIndex: 3,
+      correctIndex: 1,
       explanation:
         'This is exactly how readiness probes are designed to work during deployments. The new pods start and enter Running state, but since their readiness probe (/ready) fails during cache warmup, ' +
         'they are not added to Service endpoints. The liveness probe (/healthz) passes because the event loop is fine — just the cache is not ready. Users continue hitting old pods until new pods pass readiness. ' +
         'This is why separating liveness from readiness logic is critical for zero-downtime deployments.',
+    },
+    {
+      question:
+        'A pod is Running but has readiness probe failures. A Service selects it. Does the pod receive traffic?',
+      choices: [
+        'Yes — Running pods always receive traffic through Services',
+        'No — the pod is removed from the Service endpoints because it is not Ready, so no traffic is routed to it',
+        'Yes — readiness probes only affect startup, not ongoing traffic routing',
+        'It depends on the Service type (ClusterIP vs NodePort)',
+      ],
+      correctIndex: 1,
+      explanation:
+        'A pod must be both Running AND Ready to be included in Service endpoints. Readiness probes continuously check if a pod can handle traffic. ' +
+        'When a readiness probe fails, the endpoints controller removes the pod from the Service endpoint list — even though the pod is still Running. ' +
+        'This is critical: Running means "the container process exists," while Ready means "the application can serve requests." They are different conditions. ' +
+        'This is how Kubernetes achieves zero-downtime deployments — new pods only receive traffic after their readiness probes pass.',
     },
   ],
   initialState: () => {

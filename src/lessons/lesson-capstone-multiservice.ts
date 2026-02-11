@@ -149,10 +149,10 @@ export const lessonCapstoneMultiservice: Lesson = {
         'Users report the frontend returns "504 Gateway Timeout." You check: backend pods show status Running, the backend Service ' +
         'has endpoints, and network policies allow traffic. What is the MOST LIKELY cause?',
       choices: [
-        'The backend Service is using the wrong port number',
-        'The frontend is misconfigured and sending requests to the wrong Service name',
-        'The 504 is caused by the frontend pod itself and is unrelated to the backend',
-        'The backend pods are Running but the application inside is overloaded or deadlocked — Running only means the container process has not crashed, not that it is responding to requests',
+        'The backend Service is using the wrong port number and connections are being refused by the container',
+        'The frontend is misconfigured and sending requests to a Service name that does not match the backend',
+        'The 504 is caused by the frontend pod itself timing out on internal processing, unrelated to the backend',
+        'The backend pods are Running but the application is overloaded or deadlocked — Running does not mean responsive',
       ],
       correctIndex: 3,
       explanation:
@@ -167,10 +167,10 @@ export const lessonCapstoneMultiservice: Lesson = {
         'You are debugging a multi-service outage. `kubectl get pods` shows all pods Running. `kubectl get svc` shows all services have endpoints. ' +
         'Users still see errors. What should you check FIRST?',
       choices: [
-        'Node disk pressure and memory — the underlying infrastructure may be degraded',
-        'kubectl get events — Warning events reveal issues like OOMKills, failed probes, or resource pressure that are not visible in pod status alone',
-        'Delete all pods to force a fresh restart — this often resolves transient issues',
-        'Check if the cluster DNS (CoreDNS) pods are running, since all service discovery depends on DNS',
+        'Node disk pressure and memory utilization — the underlying infrastructure may be degraded beneath the pods',
+        'kubectl get events — Warning events reveal OOMKills, failed probes, and resource pressure hidden from pod status',
+        'Delete all pods to force a fresh restart since a clean recreation often resolves transient state issues',
+        'Check if the cluster DNS (CoreDNS) pods are running since all inter-service discovery relies on DNS resolution',
       ],
       correctIndex: 1,
       explanation:
@@ -185,10 +185,10 @@ export const lessonCapstoneMultiservice: Lesson = {
         'Your architecture has: frontend -> API gateway -> backend -> database. The database runs out of connections. ' +
         'Which failure pattern do you expect to see?',
       choices: [
-        'The backend times out waiting for database connections, the API gateway times out waiting for the backend, and the frontend times out waiting for the API gateway — a cascading timeout failure',
-        'Only the database pod crashes; frontend, API gateway, and backend continue serving cached responses',
-        'The API gateway circuit breaker immediately returns errors without waiting, preventing cascade',
-        'Kubernetes automatically restarts the database pod with more connections, resolving the issue',
+        'Each service times out waiting on the next — backend on database, gateway on backend, frontend on gateway — a cascading failure',
+        'Only the database pod crashes; the frontend, API gateway, and backend continue operating using locally cached responses',
+        'The API gateway circuit breaker detects the database failure and immediately returns errors, preventing any cascade',
+        'Kubernetes detects the connection exhaustion and automatically restarts the database pod with increased connection limits',
       ],
       correctIndex: 0,
       explanation:
@@ -204,10 +204,10 @@ export const lessonCapstoneMultiservice: Lesson = {
         'After an incident, your team wants to understand why a specific user request failed across 6 microservices. ' +
         'Which combination of observability tools gives you the most complete picture?',
       choices: [
-        'Metrics alone — dashboards show error rates and latency percentiles for each service',
-        'Logs alone — each service logs the request details, so you can search by timestamp',
-        'Distributed traces to identify WHICH service failed and HOW LONG each hop took, then logs from that specific service to understand WHAT went wrong',
-        'kubectl describe on each pod — Kubernetes events capture all request-level failures',
+        'Metrics dashboards alone, since they show error rates and latency percentiles broken down for each individual service',
+        'Centralized logs alone, since each service logs request details and you can correlate entries by searching timestamps',
+        'Distributed traces to find which service failed and how long each hop took, plus logs from that service for root cause',
+        'kubectl describe on each pod, since Kubernetes events capture all application-level request failures and error details',
       ],
       correctIndex: 2,
       explanation:

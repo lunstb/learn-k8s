@@ -25,9 +25,9 @@ spec:
   maxReplicas: ???
   targetCPUUtilizationPercentage: ???`,
   hints: [
-    { text: 'Switch to the YAML Editor tab — fill in scaleTargetRef name as "web", minReplicas as 2, maxReplicas as 8, and targetCPUUtilizationPercentage as 50.' },
-    { text: 'Or use the terminal: kubectl autoscale deployment web --min=2 --max=8 --cpu-percent=50', exact: false },
-    { text: 'Reconcile to trigger the HPA evaluation loop and see new pods created.' },
+    { text: 'The YAML Editor has an HPA template with placeholder values. Fill in the target deployment name and the scaling parameters from the goal.' },
+    { text: 'Set scaleTargetRef name to the deployment name, and configure min/max replicas and the CPU target percentage to match the goal requirements.' },
+    { text: 'kubectl autoscale deployment web --min=2 --max=8 --cpu-percent=50', exact: true },
   ],
   goals: [
     {
@@ -134,12 +134,12 @@ spec:
       question:
         'Your deployment has 4 pods, each using 75% CPU. The HPA target is 50% CPU. How many replicas will the HPA calculate?',
       choices: [
-        '5 replicas — ceil(4 * 75/50) rounds 6.0 down because the ratio is exact',
-        '8 replicas — the formula doubles the pod count when usage exceeds the target',
-        '4 replicas — HPA only scales when average CPU exceeds 100%',
-        '6 replicas — ceil(4 * 75/50) = ceil(6.0) = 6',
+        '5 replicas — the formula rounds down from 6.0 to 5 because the HPA uses floor rounding by default',
+        '8 replicas — the HPA doubles the current count whenever average utilization exceeds the target by any amount',
+        '6 replicas — applying ceil(4 * 75/50) = ceil(6.0) = 6, distributing load to reach the 50% target',
+        '4 replicas — the HPA does not scale up until average CPU utilization exceeds the target by at least 10%',
       ],
-      correctIndex: 3,
+      correctIndex: 2,
       explanation:
         'The HPA formula is: desired = ceil(currentReplicas * (currentMetric / targetMetric)). ' +
         'ceil(4 * (75/50)) = ceil(4 * 1.5) = ceil(6.0) = 6. Even though 6.0 is already a whole number, ' +
@@ -151,12 +151,12 @@ spec:
         'An HPA targets 50% CPU utilization. Your pods each request 500m CPU. One pod is currently using 400m CPU. ' +
         'What does the HPA consider its CPU utilization percentage to be?',
       choices: [
-        '50% — because the pod is using 400m out of a typical 800m node capacity',
-        '80% — because utilization is measured against the pod resource REQUEST (400m / 500m)',
-        '40% — because utilization is a fraction of 1 full CPU core (1000m)',
-        '100% — any usage above 250m is considered fully utilized',
+        '50% — because utilization is measured against the node\'s allocatable CPU capacity shared across all pods',
+        '40% — because utilization is calculated as a fraction of one full CPU core, so 400m / 1000m = 40%',
+        '66% — because utilization is measured against the pod\'s resource LIMIT, which defaults to 600m when unset',
+        '80% — because utilization is measured against the pod\'s resource REQUEST, so 400m used / 500m requested = 80%',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'HPA measures CPU utilization as a percentage of the pod\'s resource REQUEST, not the node\'s total capacity ' +
         'or a full CPU core. A pod requesting 500m and using 400m is at 80% utilization. This is why setting ' +
@@ -167,12 +167,12 @@ spec:
       question:
         'You create an HPA for your deployment, but the Metrics Server is not installed in the cluster. What happens?',
       choices: [
-        'The HPA falls back to counting pods and uses a round-robin estimation',
-        'The HPA scales to maxReplicas as a safety precaution since it cannot measure load',
+        'The HPA scales to maxReplicas as a safety precaution since it cannot determine the actual load',
         'The HPA cannot make scaling decisions and the deployment stays at its current replica count',
-        'The HPA scales to minReplicas since it assumes zero load without metrics',
+        'The HPA scales down to minReplicas since it interprets missing metrics as zero utilization',
+        'The HPA uses the last known metric values cached from before the Metrics Server went down',
       ],
-      correctIndex: 2,
+      correctIndex: 1,
       explanation:
         'Without the Metrics Server, the HPA has no data to feed its scaling formula. It logs events like ' +
         '"unable to get metrics for resource cpu" and takes no scaling action. The deployment remains at whatever ' +
@@ -184,12 +184,12 @@ spec:
         'Traffic to your app spikes for 30 seconds then returns to normal. The HPA scales up from 3 to 8 pods during the spike. ' +
         'How quickly does the HPA scale back down to 3?',
       choices: [
-        'Immediately — once metrics drop below target, the HPA removes excess pods within 15 seconds',
         'After about 5 minutes — the default scale-down stabilization window prevents premature scale-down',
-        'After exactly 60 seconds — the HPA evaluation interval is 15 seconds times 4 cycles',
-        'Never automatically — you must manually reduce replicas or delete the HPA and recreate it',
+        'Immediately — once metrics drop below the target, the HPA removes the excess pods within 15 seconds',
+        'After exactly 60 seconds — the HPA evaluates every 15 seconds and needs 4 consecutive low readings to act',
+        'After about 15 minutes — the controller waits for the pod termination grace period to expire on each pod',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
         'The default scale-down stabilization window is 300 seconds (5 minutes). During this window, the HPA ' +
         'considers the highest recommended replica count and will not scale down until the window passes with ' +

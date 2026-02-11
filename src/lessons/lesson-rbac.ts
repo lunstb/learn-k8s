@@ -131,12 +131,12 @@ export const lessonRBAC: Lesson = {
       question:
         'A pod in the "orders" namespace needs to list pods in its own namespace. What is the MINIMUM RBAC configuration?',
       choices: [
-        'A ClusterRole with pods list permission and a ClusterRoleBinding to the pod\'s ServiceAccount',
-        'A ClusterRole with pods list permission and a RoleBinding in "orders" namespace to the pod\'s ServiceAccount',
         'A Role in "orders" with pods list permission and a RoleBinding in "orders" to the pod\'s ServiceAccount',
-        'No RBAC needed — pods can always list other pods in their own namespace by default',
+        'A ClusterRole with pods list permission and a ClusterRoleBinding granting it to the pod\'s ServiceAccount',
+        'A ClusterRole with pods list permission and a RoleBinding in "orders" namespace to the pod\'s ServiceAccount',
+        'No RBAC configuration needed because pods can always list other pods in their own namespace by default',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
         'The minimum setup is a namespace-scoped Role (with get/list on pods) and a RoleBinding in the same namespace. ' +
         'Option B (ClusterRole + RoleBinding) also works and is a common pattern for reuse, but it is not the minimum — ' +
@@ -148,11 +148,11 @@ export const lessonRBAC: Lesson = {
         'Can a RoleBinding reference a ClusterRole? If so, what happens?',
       choices: [
         'No — a RoleBinding can only reference a Role, and a ClusterRoleBinding can only reference a ClusterRole',
-        'Yes — the ClusterRole permissions are granted, but scoped only to the RoleBinding\'s namespace',
         'Yes — the ClusterRole permissions are granted cluster-wide regardless of the RoleBinding\'s namespace',
-        'Only if the ClusterRole has the "namespace-bindable" annotation set to true',
+        'Yes — but only if the ClusterRole and RoleBinding are in the same namespace as the target resources',
+        'Yes — the ClusterRole permissions are granted but scoped only to the RoleBinding\'s namespace',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'A RoleBinding CAN reference a ClusterRole. When it does, the ClusterRole\'s permissions are granted only within ' +
         'the RoleBinding\'s namespace — not cluster-wide. This is a powerful and common pattern: define permissions once ' +
@@ -164,12 +164,12 @@ export const lessonRBAC: Lesson = {
         'A new developer creates a Deployment but does not specify a serviceAccountName. The pod runs with the ' +
         '"default" ServiceAccount. In a cluster with no custom RBAC policies, what API permissions does this pod have?',
       choices: [
-        'Full admin access to the namespace — the default ServiceAccount has all namespace-scoped permissions',
-        'Read-only access to all resources in the cluster for convenience',
-        'It depends on the cluster setup, but the default ServiceAccount often has no explicitly granted permissions beyond basic API discovery',
-        'Zero permissions — the default ServiceAccount cannot make any API calls at all',
+        'Full admin access to the namespace because the default ServiceAccount inherits all namespace-scoped permissions',
+        'It depends on the cluster setup, but the default ServiceAccount typically has no permissions beyond basic API discovery',
+        'Read-only access to all resources in the namespace since the default ServiceAccount gets a viewer role automatically',
+        'Zero API permissions because the default ServiceAccount token is not mounted into pods unless explicitly requested',
       ],
-      correctIndex: 2,
+      correctIndex: 1,
       explanation:
         'The default ServiceAccount\'s permissions vary by cluster configuration. In a fresh cluster with RBAC enabled, ' +
         'it typically has no meaningful permissions beyond API discovery. However, some clusters (especially older ones or ' +
@@ -182,12 +182,12 @@ export const lessonRBAC: Lesson = {
         'Your company has 5 namespaces (dev, staging, prod, monitoring, ci). You want to give the "oncall" group read access ' +
         'to pods in all 5 namespaces. What is the most maintainable approach?',
       choices: [
-        'Create one ClusterRole "pod-reader" and one ClusterRoleBinding granting it to the "oncall" group',
-        'Create 5 identical Roles (one per namespace) and 5 RoleBindings',
-        'Create one ClusterRole "pod-reader" and 5 RoleBindings (one per namespace) referencing that ClusterRole',
-        'Give the "oncall" group cluster-admin access since they need broad visibility anyway',
+        'Create 5 identical Roles (one per namespace) and 5 corresponding RoleBindings for the "oncall" group',
+        'Create one ClusterRole "pod-reader" and 5 RoleBindings (one per namespace) each referencing that ClusterRole',
+        'Create one ClusterRole "pod-reader" and one ClusterRoleBinding granting it to the "oncall" group cluster-wide',
+        'Create one ClusterRole "pod-reader" and bind it with a namespace-scoped Role aggregation across all five namespaces',
       ],
-      correctIndex: 0,
+      correctIndex: 2,
       explanation:
         'Since the "oncall" group needs the same pod-read access in ALL namespaces, a single ClusterRoleBinding with a ' +
         'ClusterRole is the most maintainable solution. When a new namespace is added, it is automatically covered. ' +

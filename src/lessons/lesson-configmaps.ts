@@ -108,6 +108,20 @@ export const lessonConfigMaps: Lesson = {
           '        name: nginx-config\n\n' +
           'Important: If a pod references a ConfigMap that does not exist, the pod will not start. ' +
           'Make sure ConfigMaps are created before the pods that need them.',
+        diagram:
+          'ConfigMap "app-config"\\n' +
+          '┌──────────────────┐\\n' +
+          '│ LOG_LEVEL=debug   │\\n' +
+          '│ DB_HOST=postgres  │\\n' +
+          '└────────┬─────────┘\\n' +
+          '         │\\n' +
+          '    ┌────┴────┐\\n' +
+          '    │         │\\n' +
+          '  env vars  volume mount\\n' +
+          '    │         │\\n' +
+          '    ▼         ▼\\n' +
+          '  $LOG_LEVEL  /config/LOG_LEVEL\\n' +
+          '  (immutable) (auto-updates)',
         keyTakeaway:
           'ConfigMaps can be consumed as environment variables (envFrom or valueFrom) or as mounted files (volume mount). Always create the ConfigMap before creating pods that reference it.',
       },
@@ -133,12 +147,12 @@ export const lessonConfigMaps: Lesson = {
       question:
         'You update a ConfigMap that pods consume via environment variables. Pods are still running. Do the pods see the new values?',
       choices: [
-        'Yes -- Kubernetes automatically injects updated environment variables into running containers',
-        'Yes -- but only after a short propagation delay of about 60 seconds',
-        'No -- environment variables are set at container startup and never change. You must restart the pods to pick up new values.',
-        'No -- you must delete and recreate the ConfigMap, then restart the pods',
+        'No -- env vars are set at container start and never change; you must restart pods to pick up new values',
+        'Yes -- Kubernetes injects updated environment variables into running containers within seconds',
+        'Yes -- but only after the kubelet syncs the change, typically within about 60 seconds',
+        'No -- you must delete and recreate the ConfigMap, then restart the pods for either method',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
         'Environment variables are injected into the container process at startup and are immutable for the lifetime of that container. Updating the ConfigMap has no effect on already-running pods that consume it via env vars. You need a pod restart (e.g., "kubectl rollout restart deployment/myapp") to pick up changes. This is one of the most common operational surprises in Kubernetes. Contrast this with volume-mounted ConfigMaps, which DO auto-update.',
     },
@@ -146,12 +160,12 @@ export const lessonConfigMaps: Lesson = {
       question:
         'You update a ConfigMap that pods consume via a volume mount (not env vars). Do the running pods eventually see the new values?',
       choices: [
-        'No -- volume-mounted ConfigMaps are read-only snapshots taken at pod creation time',
-        'Yes -- Kubernetes periodically syncs the mounted files, typically within about a minute, though the app must detect and reload the changes',
-        'Yes -- the container is automatically restarted by the kubelet to pick up the new file contents',
-        'No -- volume mounts are identical to env vars in this regard; both require pod restarts',
+        'No -- volume-mounted ConfigMaps are read-only snapshots taken at pod creation time and never refresh',
+        'No -- volume mounts behave identically to env vars; both require full pod restarts to pick up changes',
+        'Yes -- the kubelet automatically restarts the container to pick up the new mounted file contents',
+        'Yes -- the kubelet periodically syncs the mounted files (within about a minute), but the app must detect and reload',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'Volume-mounted ConfigMaps are updated automatically by the kubelet, with a sync period that defaults to roughly 60 seconds. The files in the mount point are replaced with the new content. However, the application inside the container must be designed to re-read the files -- many applications only read config at startup. This is a critical difference from env var consumption: volumes auto-update, env vars do not. For applications that cannot hot-reload, the safest approach is to create a new ConfigMap name (e.g., app-config-v2) and do a rolling update.',
     },
@@ -159,10 +173,10 @@ export const lessonConfigMaps: Lesson = {
       question:
         'A pod spec references a ConfigMap named "db-config" using envFrom. You deploy the pod, but it stays in "CreateContainerConfigError" status. What is the most likely cause?',
       choices: [
-        'The ConfigMap "db-config" contains keys with invalid characters that cannot be used as environment variable names',
-        'The ConfigMap "db-config" does not exist yet -- pods that reference missing ConfigMaps fail to start',
-        'The pod has insufficient memory to load the ConfigMap data into its environment',
-        'The ConfigMap is in a different namespace than the pod',
+        'The ConfigMap "db-config" has keys with characters invalid for environment variable names (dots or dashes)',
+        'The ConfigMap "db-config" does not exist yet -- pods referencing missing ConfigMaps fail to start',
+        'The ConfigMap is in a different namespace than the pod, so the kubelet cannot resolve the reference',
+        'The pod\'s ServiceAccount lacks RBAC permission to read ConfigMaps in this namespace',
       ],
       correctIndex: 1,
       explanation:
@@ -172,10 +186,10 @@ export const lessonConfigMaps: Lesson = {
       question:
         'Your team wants to change the LOG_LEVEL from "info" to "debug" in production without any pod restarts or downtime. The app reads its config from a file at /etc/config/settings.yaml and watches it for changes. How should you deliver this config?',
       choices: [
-        'Store LOG_LEVEL in a ConfigMap consumed as an environment variable and run "kubectl rollout restart"',
-        'SSH into each node and manually edit the config file on the host filesystem',
-        'Mount the ConfigMap as a volume at /etc/config -- updating the ConfigMap will auto-sync the file and the app will detect the change',
-        'Use "kubectl exec" to edit the file inside each running container',
+        'Store LOG_LEVEL in an env var from the ConfigMap and run "kubectl rollout restart" to apply the change',
+        'Use "kubectl exec" to edit the settings file directly inside each running container instance',
+        'Mount the ConfigMap as a volume at /etc/config -- updating the ConfigMap auto-syncs the file for the app',
+        'Create a new Deployment revision with the updated LOG_LEVEL baked into the container image',
       ],
       correctIndex: 2,
       explanation:

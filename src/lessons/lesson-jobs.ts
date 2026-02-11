@@ -130,10 +130,10 @@ spec:
       question:
         'A Job has completions=5 and parallelism=2. The 3rd pod (counting toward the 3rd completion) fails with an exit code 1. What happens next?',
       choices: [
-        'The Job immediately fails and is marked as Failed since a pod could not complete successfully',
-        'The failed pod counts as one of the 5 completions — the Job continues and needs only 2 more successful pods',
-        'The Job controller creates a replacement pod (counting the failure against backoffLimit), and still needs 3 more successful completions to reach 5 total',
-        'The Job pauses all running pods and waits for manual intervention before retrying',
+        'The Job immediately fails and is marked as Failed because any single pod failure terminates the entire Job',
+        'The failed pod counts as one of the 5 completions since it ran to exit, and the Job needs only 2 more pods',
+        'The Job controller creates a replacement pod, counts the failure against backoffLimit, and still needs 3 more successes',
+        'The Job pauses all running pods and enters a suspended state until an operator resumes it manually',
       ],
       correctIndex: 2,
       explanation:
@@ -145,10 +145,10 @@ spec:
       question:
         'A CronJob is scheduled for "0 2 * * *" (daily at 2:00 AM) with concurrencyPolicy=Forbid. The 2:00 AM Job starts but takes 90 minutes to complete. When the next day\'s 2:00 AM trigger fires, the previous Job is still running. What happens?',
       choices: [
-        'The 2:00 AM scheduled run is skipped entirely — the CronJob records a missed schedule and tries again at 2:00 AM the following day',
-        'The new Job is created and runs alongside the still-running Job from yesterday',
-        'The still-running Job is terminated and replaced by the new Job',
-        'The new Job is queued and starts automatically as soon as the running Job completes',
+        'The scheduled run is skipped entirely because Forbid prevents a new Job while the previous one is still running',
+        'The new Job is created and runs concurrently alongside the still-running Job from the previous day',
+        'The still-running Job is terminated immediately and replaced by a freshly created Job for the new schedule',
+        'The new Job is queued internally by the CronJob controller and starts as soon as the running Job completes',
       ],
       correctIndex: 0,
       explanation:
@@ -161,10 +161,10 @@ spec:
       question:
         'Your team needs to run a data processing task that reads from a queue, processes items, and exits when the queue is empty. The task should run continuously, restarting if it crashes, and always have exactly 2 workers. Should you use a Job or a Deployment?',
       choices: [
-        'A Job with completions=2 and parallelism=2, since it runs exactly 2 pods for the processing work',
-        'A Deployment with replicas=2, because the workers should run continuously and restart on failure — Jobs are for tasks that finish and stop',
-        'A Job with no completions limit, since it allows pods to run indefinitely like a Deployment',
-        'Either works identically — Jobs and Deployments are interchangeable for queue workers',
+        'A Job with completions=2 and parallelism=2, since it creates exactly 2 pods to process the queue work concurrently',
+        'A Deployment with replicas=2, because the workers must run continuously and restart on failure rather than finishing',
+        'A Job with no completions field set, which causes pods to run indefinitely until the queue drains and they exit cleanly',
+        'A CronJob scheduled every minute that spawns a new Job, checking the queue each time and processing any remaining items',
       ],
       correctIndex: 1,
       explanation:
@@ -176,10 +176,10 @@ spec:
       question:
         'You have a Job with completions=10, parallelism=3, and backoffLimit=4. After 7 pods succeed, the 8th, 9th, 10th, and 11th pods all fail consecutively. What is the final state of the Job?',
       choices: [
-        'The Job succeeds with 7 out of 10 completions, since over 50% succeeded',
-        'The Job continues retrying indefinitely because 7 completions are already done and it only needs 3 more',
-        'The Job succeeds because the total number of pods created (11) exceeds the completions count of 10',
-        'The Job is marked as Failed — the 4 consecutive failures exhaust the backoffLimit of 4, even though 7 pods already succeeded',
+        'The Job is marked as complete with 7 out of 10 successes because partial completion counts as a successful Job status',
+        'The Job continues retrying because 7 completions are done and only 3 more are needed with exponential backoff delay',
+        'The Job resets its failure counter after each successful pod, so 4 new failures only count as 4 against a fresh limit',
+        'The Job is marked as Failed because 4 total failures exhaust the backoffLimit, even though 7 pods already succeeded',
       ],
       correctIndex: 3,
       explanation:

@@ -244,50 +244,56 @@ reclaimPolicy: ???`,
     {
       question: 'A pod references a PVC that is still in "Pending" state. What happens to the pod?',
       choices: [
-        'The pod starts normally without the volume',
-        'The pod stays in Pending until the PVC is bound',
-        'The pod enters CrashLoopBackOff',
-        'The pod is automatically deleted',
+        'The pod starts normally and mounts an empty temporary volume instead',
+        'The pod enters CrashLoopBackOff because the volume mount fails inside the container',
+        'The pod is scheduled to a node but the container init phase blocks until the PVC binds',
+        'The pod stays in Pending state until the PVC becomes bound to a PV',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'Kubernetes will not schedule a pod until all its PVC references are bound. The pod stays Pending with a message indicating the unbound PVC.',
     },
     {
       question: 'What is the difference between static and dynamic provisioning?',
       choices: [
-        'Static provisioning is faster',
-        'Dynamic provisioning requires a StorageClass; static requires an admin to pre-create PVs',
-        'Static provisioning only works with local disks',
-        'There is no functional difference',
+        'Static provisioning creates PVs at cluster startup time, while dynamic provisioning creates them during pod scheduling',
+        'Static provisioning binds PVCs to PVs by name, while dynamic provisioning binds them by matching capacity and access modes only',
+        'Dynamic provisioning uses a StorageClass with a provisioner to create PVs automatically when PVCs are created; static provisioning requires an admin to pre-create PVs manually',
+        'Dynamic provisioning always uses cloud storage APIs, while static provisioning always uses local node disks',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
         'With static provisioning, an admin creates PVs manually. With dynamic provisioning, a StorageClass provisioner automatically creates PVs when PVCs are created.',
     },
     {
-      question: 'Which access mode allows multiple nodes to mount the same volume for reading and writing?',
+      question: 'A PVC requests 10Gi from StorageClass "fast-ssd". The StorageClass exists and its provisioner is running. But the PVC stays Pending. What are possible causes?',
       choices: [
-        'ReadWriteOnce (RWO)',
-        'ReadOnlyMany (ROX)',
-        'ReadWriteMany (RWX)',
-        'ReadWriteSingle (RWS)',
+        'The provisioner has hit a cloud provider quota, the requested access mode is unsupported by the backend, or the StorageClass parameters specify an unavailable disk type',
+        'The PVC name conflicts with an existing PVC in a different namespace, causing the provisioner to skip it',
+        'The StorageClass binding mode is WaitForFirstConsumer, so it defers provisioning until a pod references the PVC',
+        'The PVC spec is missing a volumeName field, which is required for dynamic provisioning to identify the target',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
-        'ReadWriteMany (RWX) allows multiple nodes to mount read-write simultaneously. This requires storage backends like NFS or CephFS that support concurrent access.',
+        'Dynamic provisioning can fail for several reasons even when the StorageClass exists: cloud provider quotas or API errors, ' +
+        'unsupported access modes (e.g., requesting RWX from an EBS provisioner that only supports RWO), invalid parameters in the StorageClass, ' +
+        'or the provisioner pod itself is unhealthy. Check `kubectl describe pvc` for events from the provisioner. ' +
+        'Option D is partially true for some volume binding modes (WaitForFirstConsumer delays provisioning until a pod needs it), ' +
+        'but the default Immediate mode provisions right away.',
     },
     {
-      question: 'A PV has reclaimPolicy: Retain. What happens when its PVC is deleted?',
+      question: 'You delete a PVC that was bound to a dynamically provisioned PV with reclaimPolicy: Delete. Later, you realize you needed that data. Can you recover it?',
       choices: [
-        'The PV and its data are immediately deleted',
-        'The PV transitions to Released and keeps its data for manual cleanup',
-        'The PV becomes Available and can be bound to a new PVC',
-        'The PV is recycled and all data is wiped',
+        'Yes — the PV transitions to Released state and the underlying storage is preserved until an admin manually reclaims it',
+        'No — with Delete reclaim policy, both the PV and the underlying storage (cloud disk) are removed automatically and the data is gone unless you have a separate backup',
+        'Yes — Kubernetes moves the PV to a recycle queue where the data is retained for a configurable grace period before deletion',
+        'No — but the PV itself still exists in Released state, so you can create a new PVC and rebind to recover the data',
       ],
       correctIndex: 1,
       explanation:
-        'With Retain policy, the PV moves to Released state but keeps all data. An admin must manually decide what to do with the data and the PV.',
+        'The Delete reclaim policy is destructive: when the PVC is deleted, the PV and its backing storage (EBS volume, GCE PD, etc.) are also deleted. ' +
+        'There is no undo, grace period, or soft-delete. This is why Retain is recommended for production databases — it preserves the PV and data after PVC deletion, ' +
+        'allowing manual recovery. For critical data, always use Retain reclaim policy AND maintain external backups (e.g., volume snapshots).',
     },
   ],
 };

@@ -146,12 +146,12 @@ export const lessonNetworkPolicies: Lesson = {
       question:
         'You carefully create a NetworkPolicy that denies all ingress to your database pods. You test it, but traffic from other pods still reaches the database without any restriction. The policy YAML is correct. What is the most likely explanation?',
       choices: [
-        'Your cluster\'s CNI plugin (e.g., basic Flannel) does not support NetworkPolicy enforcement — the resource exists but is silently ignored',
-        'NetworkPolicy resources only take effect after a cluster restart',
-        'The policy needs to be created in the kube-system namespace to be enforced cluster-wide',
-        'You need to also create an egress policy on the source pods for the ingress policy to take effect',
+        'The NetworkPolicy was created in the wrong namespace and only affects pods in the namespace where it is applied',
+        'You also need a matching egress policy on the source pods, because ingress policies alone cannot block traffic',
+        'The policy\'s podSelector does not match the database pods due to a label mismatch between the policy and the pod spec',
+        'Your cluster\'s CNI plugin does not support NetworkPolicy enforcement, so the resource exists but is silently ignored',
       ],
-      correctIndex: 0,
+      correctIndex: 3,
       explanation:
         'This is a dangerous gotcha. Kubernetes always lets you create NetworkPolicy resources regardless of whether your CNI enforces them. If your CNI plugin does not support Network Policies (e.g., basic Flannel), ' +
         'the policies are stored in etcd but have zero effect on traffic — giving you a false sense of security. Always verify your CNI supports enforcement. Calico, Cilium, and Weave Net all support Network Policies; basic Flannel does not.',
@@ -160,12 +160,12 @@ export const lessonNetworkPolicies: Lesson = {
       question:
         'You create a NetworkPolicy that selects pods with app=api and defines only Ingress rules (allowing traffic from app=frontend on port 8080). The policyTypes field lists only "Ingress". What happens to egress traffic FROM the api pods?',
       choices: [
-        'All egress from api pods is also denied, since the policy selects those pods',
-        'Egress is denied by default whenever any NetworkPolicy selects a pod, regardless of policyTypes',
-        'Egress is limited to the same pods listed in the ingress "from" rules',
         'Egress from api pods is completely unaffected — only the Ingress policy type was specified, so egress remains open',
+        'All egress from api pods is also denied, since any NetworkPolicy selecting a pod restricts all traffic directions',
+        'Egress is restricted to the same set of pods listed in the ingress "from" rules, mirroring the ingress allowlist',
+        'Egress is denied by default for any selected pod, but an implicit rule allows DNS on port 53 to keep resolution working',
       ],
-      correctIndex: 3,
+      correctIndex: 0,
       explanation:
         'This is a subtle but critical detail. NetworkPolicy enforcement only applies to the policy types explicitly listed in policyTypes. If you only list "Ingress", then only ingress traffic is restricted (to what the rules allow). ' +
         'Egress is completely untouched — it remains fully open as if no policy existed for that direction. To restrict egress, you must explicitly add "Egress" to policyTypes. Many people assume selecting a pod locks down all traffic, but it only locks down the declared directions.',
@@ -174,12 +174,12 @@ export const lessonNetworkPolicies: Lesson = {
       question:
         'You want to create a "deny all ingress" policy for a namespace. You write a NetworkPolicy with podSelector: {} and policyTypes: ["Ingress"] but no ingress rules. What does the empty podSelector {} match?',
       choices: [
-        'No pods — an empty selector matches nothing, so the policy has no effect',
-        'Only pods without any labels',
-        'All pods in the namespace where the NetworkPolicy is created',
-        'All pods across all namespaces in the cluster',
+        'No pods at all — an empty selector is treated as matching nothing, so the policy has no effect on traffic',
+        'All pods in the namespace where the NetworkPolicy is created, regardless of their labels',
+        'Only pods that have zero labels defined, since the empty selector filters for pods with no label keys',
+        'All pods across every namespace in the cluster, making this a cluster-wide deny-all ingress policy',
       ],
-      correctIndex: 2,
+      correctIndex: 1,
       explanation:
         'An empty podSelector {} selects ALL pods in the policy\'s namespace — this is how "deny all" policies work. Combined with policyTypes: ["Ingress"] and no ingress rules listed, it means: ' +
         '"select every pod in this namespace and deny all incoming traffic to them." This is the standard deny-all-ingress pattern. Note that it only affects the namespace where the policy is created, not the entire cluster. ' +
@@ -189,10 +189,10 @@ export const lessonNetworkPolicies: Lesson = {
       question:
         'Your cluster has two namespaces: "frontend" and "backend". You create a NetworkPolicy in the "backend" namespace that allows ingress only from pods with app=web. A pod with app=web exists in the "frontend" namespace. Does it get access?',
       choices: [
-        'Yes — podSelector matches pods across all namespaces by default',
-        'Yes — but only because pods in different namespaces can always communicate regardless of policies',
-        'No — a podSelector without a namespaceSelector only matches pods within the same namespace ("backend"), not pods in "frontend"',
-        'No — cross-namespace traffic is always blocked by NetworkPolicy regardless of selectors',
+        'Yes — podSelector matches pods with that label across all namespaces in the cluster by default',
+        'Yes — but only because the policy allows all traffic from any namespace when no namespaceSelector is specified',
+        'No — a podSelector without a namespaceSelector only matches pods in the same namespace ("backend"), not pods in "frontend"',
+        'No — cross-namespace traffic is always blocked by Kubernetes networking regardless of what selectors you configure',
       ],
       correctIndex: 2,
       explanation:

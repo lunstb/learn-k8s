@@ -59,6 +59,9 @@ const RESOURCE_ALIASES: Record<string, string> = {
   storageclass: 'storageclass',
   storageclasses: 'storageclass',
   sc: 'storageclass',
+  pdb: 'pdb',
+  poddisruptionbudget: 'pdb',
+  poddisruptionbudgets: 'pdb',
 };
 
 export function parseCommand(input: string): ParsedCommand | { error: string } {

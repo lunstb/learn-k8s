@@ -130,12 +130,12 @@ spec:
       question:
         'Your cluster has 3 nodes running a log-collector DaemonSet. You add a 4th node to handle increased traffic. What happens to the DaemonSet?',
       choices: [
-        'Nothing — the DaemonSet was configured for 3 nodes and you need to update its replica count to 4',
-        'You need to restart the DaemonSet controller to detect the new node',
         'The DaemonSet controller detects the new node and automatically creates a log-collector pod on it without any manual action',
-        'The DaemonSet moves one of the existing pods to the new node to rebalance, leaving one original node without a pod',
+        'Nothing changes until you update the DaemonSet\'s replica count from 3 to 4 to account for the additional node',
+        'You need to restart the DaemonSet controller so it re-evaluates the node list and discovers the new node',
+        'The DaemonSet rebalances by moving one of the existing pods to the new node, leaving one original node uncovered',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
         'DaemonSets continuously watch the node list. When a new eligible node appears, the DaemonSet controller automatically creates a pod on it. There is no replica count to update — the DaemonSet\'s desired state is always "one pod per eligible node." ' +
         'This is the key difference from a Deployment: you never need to adjust for cluster size changes. Similarly, if a node is removed, the orphaned pod is cleaned up automatically.',
@@ -144,12 +144,12 @@ spec:
       question:
         'Your Kubernetes control plane node has the taint node-role.kubernetes.io/control-plane:NoSchedule. You need to run a critical monitoring DaemonSet on ALL nodes, including the control plane. How do you achieve this?',
       choices: [
-        'DaemonSets automatically ignore taints, so the pod will be scheduled on the control plane node without any changes',
-        'You must remove the taint from the control plane node — there is no other way to schedule pods there',
-        'Add a toleration for the control-plane taint in the DaemonSet pod template, allowing the pod to be scheduled on the tainted node',
-        'Use nodeAffinity to force the pod onto the control plane node, which overrides taints',
+        'DaemonSets automatically bypass all taints by default, so the pod will schedule on the control plane without changes',
+        'You must remove the taint from the control plane node first, because taints always take absolute precedence over DaemonSets',
+        'Use a nodeAffinity rule with requiredDuringScheduling to force the pod onto the control plane node, overriding its taint',
+        'Add a toleration for the control-plane taint in the DaemonSet pod template so the pod can schedule on the tainted node',
       ],
-      correctIndex: 2,
+      correctIndex: 3,
       explanation:
         'Taints prevent pods from being scheduled on a node unless the pod has a matching toleration. DaemonSets do not automatically bypass taints (a common misconception). ' +
         'To run a DaemonSet pod on a tainted control plane node, you must add the appropriate toleration to the pod spec: tolerations: [{key: "node-role.kubernetes.io/control-plane", effect: "NoSchedule"}]. ' +
@@ -159,12 +159,12 @@ spec:
       question:
         'A DaemonSet is performing a rolling update on a 5-node cluster with the default strategy (RollingUpdate, maxUnavailable=1). How many nodes are without the DaemonSet pod at any given moment during the update?',
       choices: [
-        'All 5 nodes temporarily lose their pods while the update replaces them simultaneously',
-        'At most 2 nodes — Kubernetes always updates in pairs for efficiency',
-        'Zero nodes — Kubernetes creates the new pod first and only then terminates the old one on each node (surge strategy)',
-        'At most 1 node — the update terminates the old pod on one node, waits for the new pod to be Running, then moves to the next node',
+        'All 5 nodes temporarily lose their pods while the update replaces all of them at the same time for consistency',
+        'Zero nodes are ever uncovered because Kubernetes creates the replacement pod before terminating the old one on each node',
+        'At most 1 node — the update terminates the old pod on one node, waits for the new pod to be Running, then proceeds',
+        'At most 2 nodes — the controller always updates nodes in pairs to balance speed and availability during the rollout',
       ],
-      correctIndex: 3,
+      correctIndex: 2,
       explanation:
         'With maxUnavailable=1 (the default), the DaemonSet controller updates one node at a time: it deletes the old pod on one node, waits for the new version to reach Running state on that node, then proceeds to the next. ' +
         'At most 1 node is without the DaemonSet pod at any point during the rollout. This is critical for infrastructure DaemonSets — you never want all your logging or monitoring agents down simultaneously. ' +
@@ -174,10 +174,10 @@ spec:
       question:
         'You want your GPU monitoring DaemonSet to run only on nodes that have GPUs (labeled with hardware=gpu), not on every node in the cluster. How do you configure this?',
       choices: [
-        'Set a replica count equal to the number of GPU nodes in the DaemonSet spec',
-        'Use node affinity (nodeSelector or affinity rules) in the DaemonSet pod template to target only nodes labeled hardware=gpu',
-        'Create the DaemonSet in a namespace that is limited to GPU nodes',
-        'Taint the non-GPU nodes and the DaemonSet will automatically skip them since it has no tolerations',
+        'Taint the non-GPU nodes with a NoSchedule taint so the DaemonSet pods are only placed on untainted GPU nodes',
+        'Use nodeSelector or nodeAffinity in the DaemonSet pod template to target only nodes with the hardware=gpu label',
+        'Apply a resource limit for GPU in the pod spec so the scheduler only places pods on nodes that advertise GPU capacity',
+        'Add an anti-affinity rule that repels the DaemonSet pods from nodes that lack the hardware=gpu label',
       ],
       correctIndex: 1,
       explanation:

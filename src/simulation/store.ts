@@ -21,6 +21,7 @@ import type {
   StorageClass,
   PersistentVolume,
   PersistentVolumeClaim,
+  PodDisruptionBudget,
 } from './types';
 import { reconcileReplicaSets } from './controllers/replicaset';
 import { reconcileDeployments } from './controllers/deployment';
@@ -123,6 +124,8 @@ export interface SimulatorStore {
   addPVC: (pvc: PersistentVolumeClaim) => void;
   removePVC: (uid: string) => void;
   updatePVC: (uid: string, updates: Partial<PersistentVolumeClaim>) => void;
+  addPDB: (pdb: PodDisruptionBudget) => void;
+  removePDB: (uid: string) => void;
 
   // Simulation controls
   tick: (auto?: boolean) => void;
@@ -200,6 +203,7 @@ const initialClusterState: ClusterState = {
   storageClasses: [],
   persistentVolumes: [],
   persistentVolumeClaims: [],
+  podDisruptionBudgets: [],
   helmReleases: [],
   tick: 0,
 };
@@ -533,6 +537,16 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       },
     })),
 
+  addPDB: (pdb) =>
+    set((state) => ({
+      cluster: { ...state.cluster, podDisruptionBudgets: [...state.cluster.podDisruptionBudgets, pdb] },
+    })),
+
+  removePDB: (uid) =>
+    set((state) => ({
+      cluster: { ...state.cluster, podDisruptionBudgets: state.cluster.podDisruptionBudgets.filter((p) => p.metadata.uid !== uid) },
+    })),
+
   setYamlEditorContent: (content) => set({ yamlEditorContent: content }),
   setActiveBottomTab: (tab) => set({ activeBottomTab: tab }),
 
@@ -575,6 +589,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       storageClasses: [...state.cluster.storageClasses],
       persistentVolumes: state.cluster.persistentVolumes.map((pv) => ({ ...pv })),
       persistentVolumeClaims: state.cluster.persistentVolumeClaims.map((pvc) => ({ ...pvc })),
+      podDisruptionBudgets: state.cluster.podDisruptionBudgets.map((p) => ({ ...p })),
       helmReleases: [...state.cluster.helmReleases],
     };
     const allActions: ControllerAction[] = [];
@@ -921,6 +936,7 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       storageClasses: state.storageClasses || [],
       persistentVolumes: state.persistentVolumes || [],
       persistentVolumeClaims: state.persistentVolumeClaims || [],
+      podDisruptionBudgets: state.podDisruptionBudgets || [],
       helmReleases: state.helmReleases || [],
       tick: 0,
     };
@@ -1141,6 +1157,61 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
       }
     }
 
+    // Handle init containers: run them sequentially before main container
+    if (pod.spec.initContainers && pod.spec.initContainers.length > 0 && pod.status.phase === 'Pending' && !pod.status.reason) {
+      if (!pod.status.initContainerStatuses) {
+        pod.status.initContainerStatuses = pod.spec.initContainers.map((ic) => ({
+          name: ic.name,
+          state: 'waiting' as const,
+        }));
+      }
+      const statuses = pod.status.initContainerStatuses!;
+      const allCompleted = statuses.every((s) => s.state === 'completed');
+      if (!allCompleted) {
+        // Find the current init container to process
+        const currentIdx = statuses.findIndex((s) => s.state !== 'completed');
+        if (currentIdx >= 0) {
+          const icStatus = statuses[currentIdx];
+          const icSpec = pod.spec.initContainers[currentIdx];
+          if (icStatus.state === 'waiting') {
+            icStatus.state = 'running';
+            if (!pod.spec.logs) pod.spec.logs = [];
+            pod.spec.logs.push(`[init:${icSpec.name}] Starting init container`);
+            events.push({
+              timestamp: Date.now(), tick: currentTick, type: 'Normal', reason: 'Started',
+              objectKind: 'Pod', objectName: pod.metadata.name,
+              message: `Started init container "${icSpec.name}" with image "${icSpec.image}"`,
+            });
+          } else if (icStatus.state === 'running') {
+            if (icSpec.failureMode === 'fail') {
+              pod.status.reason = 'Init:Error';
+              pod.status.message = `Init container "${icSpec.name}" failed`;
+              if (!pod.spec.logs) pod.spec.logs = [];
+              pod.spec.logs.push(`[init:${icSpec.name}] Error: init container failed`);
+              events.push({
+                timestamp: Date.now(), tick: currentTick, type: 'Warning', reason: 'Failed',
+                objectKind: 'Pod', objectName: pod.metadata.name,
+                message: `Init container "${icSpec.name}" failed`,
+              });
+              continue;
+            }
+            icStatus.state = 'completed';
+            if (!pod.spec.logs) pod.spec.logs = [];
+            pod.spec.logs.push(`[init:${icSpec.name}] Completed successfully`);
+            events.push({
+              timestamp: Date.now(), tick: currentTick, type: 'Normal', reason: 'Completed',
+              objectKind: 'Pod', objectName: pod.metadata.name,
+              message: `Init container "${icSpec.name}" completed`,
+            });
+          }
+        }
+        // If not all completed yet, skip the rest of the lifecycle for this tick
+        const nowAllCompleted = statuses.every((s) => s.state === 'completed');
+        if (!nowAllCompleted) continue;
+        // All init containers done — fall through to normal lifecycle
+      }
+    }
+
     // Handle failure modes
     if (pod.spec.failureMode === 'ImagePullError') {
       if (pod.status.phase === 'Pending') {
@@ -1264,6 +1335,31 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent
           message: `Started container with image "${pod.spec.image}"`,
         });
       }
+    }
+
+    // Startup probe lifecycle: keep ready=false and suspend liveness until startup probe passes
+    if (pod.status.phase === 'Running' && pod.spec.startupProbe && !pod.status.startupProbeCompleted) {
+      const probe = pod.spec.startupProbe;
+      const failureThreshold = probe.failureThreshold || 3;
+      const periodSeconds = probe.periodSeconds || 1;
+      const ticksNeeded = failureThreshold * periodSeconds;
+      const age = currentTick - (pod.status.tickCreated || 0);
+      if (age >= ticksNeeded) {
+        // Startup probe passes
+        pod.status.startupProbeCompleted = true;
+        pod.status.ready = true;
+        if (!pod.spec.logs) pod.spec.logs = [];
+        pod.spec.logs.push(`[startup-probe] Startup probe passed after ${age} ticks`);
+        events.push({
+          timestamp: Date.now(), tick: currentTick, type: 'Normal', reason: 'StartupProbeSucceeded',
+          objectKind: 'Pod', objectName: pod.metadata.name,
+          message: `Startup probe passed — liveness and readiness probes now active`,
+        });
+      } else {
+        // Startup probe still running — keep not ready, suspend liveness
+        pod.status.ready = false;
+      }
+      continue;
     }
 
     // Update readiness for running pods with readiness probes

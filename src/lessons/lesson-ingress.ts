@@ -167,12 +167,12 @@ spec:
       question:
         'You run "kubectl apply" to create an Ingress resource with routing rules for api.example.com. The resource is created successfully (kubectl get ingress shows it), but HTTP requests to api.example.com get no response. What is the most likely cause?',
       choices: [
-        'No Ingress controller is installed in the cluster — the Ingress resource exists but nothing is reading or acting on it',
-        'The Ingress rules have a syntax error in the host field',
-        'The backend Service "api-svc" does not exist yet, so the Ingress has no targets',
-        'The DNS record for api.example.com has not propagated yet',
+        'The Ingress rules have a syntax error in the host field that the API server accepted but the controller rejects',
+        'The backend Service "api-svc" does not exist yet, so the Ingress controller has no target to forward traffic to',
+        'No Ingress controller is installed in the cluster, so nothing is reading or acting on the Ingress resource',
+        'The DNS record for api.example.com has not propagated yet, so requests are not reaching the cluster at all',
       ],
-      correctIndex: 0,
+      correctIndex: 2,
       explanation:
         'This is one of the most common Ingress mistakes. Kubernetes lets you create Ingress resources even without a controller installed — the API server accepts the object, and kubectl shows it. ' +
         'But an Ingress resource is just a declaration of desired routing. Without an Ingress controller (nginx, Traefik, etc.) actively watching and implementing those rules, nothing actually happens. ' +
@@ -182,12 +182,12 @@ spec:
       question:
         'Your company runs 12 microservices, each needing external HTTPS access. A colleague suggests creating a LoadBalancer Service for each. What is the primary problem with this approach compared to using Ingress?',
       choices: [
-        'LoadBalancer Services do not support HTTPS traffic, so TLS termination is impossible',
-        'Each LoadBalancer Service provisions a separate cloud load balancer, resulting in 12 load balancers with 12 separate IP addresses and significant cost — Ingress shares a single entry point',
-        'LoadBalancer Services are limited to 5 per cluster by the Kubernetes API',
-        'LoadBalancer Services require NodePort allocation, and there are only 2768 available NodePorts in a cluster',
+        'LoadBalancer Services cannot perform TLS termination, so each microservice must handle its own certificates internally',
+        'LoadBalancer Services expose random NodePorts that conflict when more than 10 services share the same cluster nodes',
+        'LoadBalancer Services route traffic at L4 only, making it impossible to distinguish between different microservices by hostname',
+        'Each LoadBalancer Service provisions a separate cloud load balancer, creating 12 load balancers with significant cost overhead',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'Each LoadBalancer Service creates a dedicated cloud load balancer (e.g., an AWS ELB or GCP LB), each with its own public IP and monthly cost. With 12 services, that is 12 separate load balancers. ' +
         'An Ingress controller uses a single load balancer and routes traffic to all 12 services based on host/path rules. This saves cost, simplifies DNS management, and centralizes TLS termination.',
@@ -196,12 +196,12 @@ spec:
       question:
         'You need to serve api.example.com over HTTPS. Where does TLS termination typically happen in a Kubernetes Ingress setup, and what do the backend pods receive?',
       choices: [
-        'TLS terminates at the cloud load balancer before it reaches the cluster — the Ingress controller receives plain HTTP',
-        'TLS terminates at the Ingress controller, which handles certificates and forwards plain HTTP to backend Services — pods do not need TLS configuration',
-        'Each backend pod must have its own TLS certificate configured — the Ingress controller passes encrypted traffic through unchanged',
-        'TLS terminates at the Service level — the Service object decrypts traffic before forwarding to pods',
+        'TLS terminates at the Ingress controller, which handles certificates from a referenced TLS Secret and forwards plain HTTP to backend Services',
+        'TLS terminates at the cloud load balancer before reaching the cluster, so the Ingress controller only handles unencrypted HTTP traffic',
+        'Each backend pod must have its own TLS certificate configured in its container, because the Ingress controller passes encrypted traffic through unchanged',
+        'TLS terminates at the kube-proxy level on each node, so both the Ingress controller and backend pods only handle decrypted HTTP',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
         'In the standard Kubernetes pattern, the Ingress controller performs TLS termination. You store certificates in a Kubernetes Secret (type kubernetes.io/tls) and reference it in the Ingress spec. ' +
         'The controller handles the TLS handshake with clients and forwards decrypted HTTP to backend Services. This means your application containers only need to serve plain HTTP, simplifying deployment. ' +
@@ -211,12 +211,12 @@ spec:
       question:
         'Your cluster runs both an nginx Ingress controller for public traffic and a Traefik controller for internal APIs. You create a new Ingress resource but do not specify an ingressClassName. What happens?',
       choices: [
-        'Both controllers process the Ingress, causing duplicate routing and conflicts',
-        'Kubernetes automatically selects the controller with the lowest resource usage',
-        'The Ingress is rejected by the API server since no class is specified',
-        'If a default IngressClass is set, that controller handles it; if no default exists, the behavior is undefined and the Ingress may be ignored by both controllers',
+        'Both controllers process the Ingress simultaneously, causing duplicate routing and potential conflicts between them',
+        'If a default IngressClass exists, that controller handles it; otherwise the behavior is undefined and both may ignore it',
+        'Kubernetes automatically selects whichever controller has the lowest current resource usage to handle the Ingress',
+        'The API server rejects the Ingress resource at admission time because ingressClassName is a required field',
       ],
-      correctIndex: 3,
+      correctIndex: 1,
       explanation:
         'When multiple Ingress controllers exist, IngressClass determines which controller handles each Ingress. If you omit ingressClassName, Kubernetes looks for an IngressClass marked as default ' +
         '(via the annotation ingressclass.kubernetes.io/is-default-class=true). If exactly one default exists, that controller picks it up. If no default is set, the behavior depends on the controllers — ' +

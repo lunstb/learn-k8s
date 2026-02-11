@@ -132,12 +132,12 @@ export const lessonScheduling: Lesson = {
       question:
         'You cordon node-2 to prepare for maintenance. What happens to the 4 pods currently running on node-2?',
       choices: [
-        'All 4 pods are immediately evicted and rescheduled to other nodes',
-        'The pods are gracefully terminated one at a time over the next 5 minutes',
         'Nothing — the 4 pods continue running; cordon only prevents NEW pods from being scheduled there',
-        'The pods enter Pending state until the node is uncordoned',
+        'All 4 pods are immediately evicted and rescheduled to other nodes with available capacity',
+        'The pods are gracefully terminated one at a time over the next 5 minutes by the node controller',
+        'The pods enter a Pending state and remain paused until the node is uncordoned again',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
         'This is one of the most common misconceptions about cordon. Cordoning only sets the node as unschedulable — it does NOT evict existing pods. ' +
         'Your 4 pods continue running normally. If you need to remove pods from the node, you must use "kubectl drain," which cordons the node AND evicts all pods. ' +
@@ -147,10 +147,10 @@ export const lessonScheduling: Lesson = {
       question:
         'You drained node-3, and its pods were rescheduled to node-1 and node-2. After maintenance, you uncordon node-3. Do the pods move back?',
       choices: [
-        'Yes — Kubernetes automatically rebalances pods across all available nodes',
-        'Yes — but only after a 5-minute stabilization period',
-        'No — Kubernetes does not rebalance existing pods; node-3 stays empty until new pods are created or a manual intervention occurs',
-        'No — uncordoning has no effect; you must delete and recreate the node',
+        'Yes — Kubernetes automatically rebalances running pods across all available nodes once capacity changes',
+        'Yes — but only after a 5-minute stabilization period to ensure the node is stable before moving pods',
+        'No — Kubernetes does not rebalance existing pods; node-3 stays empty until new pods are created',
+        'No — uncordoning only allows scheduling of pods from other namespaces, not the original ones',
       ],
       correctIndex: 2,
       explanation:
@@ -163,10 +163,10 @@ export const lessonScheduling: Lesson = {
       question:
         'A cluster has 3 nodes with capacity 3 each, running 9 total pods (3 per node). Node-1 fails and becomes NotReady. Its 3 pods are evicted. What happens next?',
       choices: [
-        'All 3 replacement pods are scheduled to node-2 and node-3 immediately',
-        'The ReplicaSet reduces its desired count to 6 to match available capacity',
-        'Kubernetes automatically increases node-2 and node-3 capacity to accommodate the extra pods',
-        'The RS creates 3 replacement pods, but they remain Pending because node-2 and node-3 are already at full capacity (3/3 each)',
+        'All 3 replacement pods are scheduled to node-2 and node-3 immediately by splitting them evenly',
+        'The ReplicaSet reduces its desired count to 6 to match the current available node capacity',
+        'The cluster autoscaler automatically provisions a new node to handle the displaced pods',
+        'The RS creates 3 replacement pods, but they stay Pending because node-2 and node-3 are at full capacity (3/3)',
       ],
       correctIndex: 3,
       explanation:
@@ -179,10 +179,10 @@ export const lessonScheduling: Lesson = {
       question:
         'Two nodes have equal available capacity. Node-1 is in zone-a and node-2 is in zone-b. A new pod has no node affinity or zone preferences. Which node does the scheduler pick?',
       choices: [
-        'Always node-1 because it has a lower node number',
-        'The scheduler picks based on a scoring algorithm that considers factors like spreading pods across nodes, but with equal scores either node could be chosen',
-        'The pod stays Pending because the scheduler cannot break ties',
-        'The scheduler always places pods in zone-a first, then zone-b',
+        'Always node-1 because node names are sorted alphabetically and the first eligible node wins',
+        'The scheduler picks based on a scoring algorithm that considers pod spreading and resource balance, so either node could be chosen',
+        'The pod stays Pending because the scheduler requires explicit zone preferences to break ties',
+        'The scheduler always prioritizes zone-a over zone-b due to the default topology ordering rules',
       ],
       correctIndex: 1,
       explanation:
@@ -190,6 +190,22 @@ export const lessonScheduling: Lesson = {
         'Scoring considers many factors including resource balance, pod spreading across topology zones, and affinity rules. ' +
         'With no preferences set and truly equal conditions, the scheduler uses its internal scoring algorithm to pick — there is no simple alphabetical or numbered ordering. ' +
         'In practice, you can influence placement with nodeAffinity, podAntiAffinity, and topology spread constraints.',
+    },
+    {
+      question:
+        'A pod requests 2 CPU cores. Node-1 has 4 cores total with 3 cores already committed to other pod requests (but actual usage is only 1 core). Can the scheduler place this pod on node-1?',
+      choices: [
+        'Yes — the scheduler uses actual CPU usage (1 core), leaving 3 cores free for the new pod',
+        'Yes — the node has 3 idle CPU cores based on real-time metrics, which exceeds the 2-core request',
+        'It depends on the pod\'s QoS class — BestEffort pods bypass request-based scheduling checks',
+        'No — the scheduler uses committed requests (3 of 4 allocated), leaving only 1 core, which is insufficient',
+      ],
+      correctIndex: 3,
+      explanation:
+        'The scheduler makes decisions based on resource requests, not actual usage. Even though the node is only using 1 of its 4 cores, ' +
+        '3 cores are committed (requested by existing pods). The scheduler sees only 1 core available, which is insufficient for a 2-core request. ' +
+        'The pod would stay Pending. This is a fundamental concept: scheduling is based on reservations, not utilization. ' +
+        'This can lead to situations where nodes appear underutilized but cannot accept new pods — a common source of confusion in capacity planning.',
     },
   ],
   initialState: () => {

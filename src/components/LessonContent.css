@@ -63,6 +63,17 @@
   margin-bottom: 0;
 }
 
+.lecture-list {
+  margin: 0 0 12px;
+  padding-left: 24px;
+  color: #94a3b8;
+  line-height: 1.7;
+}
+
+.lecture-list li {
+  margin-bottom: 4px;
+}
+
 .lecture-prose strong,
 .lecture-takeaway strong {
   color: #e2e8f0;

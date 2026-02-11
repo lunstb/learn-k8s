@@ -131,12 +131,12 @@ export const lessonHelm: Lesson = {
       question:
         'You run `helm install my-app nginx-chart` successfully. A colleague then runs `helm install my-app nginx-chart` on the same cluster. What happens?',
       choices: [
-        'The command fails with an error because the release name "my-app" already exists',
-        'A second set of resources is created alongside the first, both named "my-app"',
-        'The existing release is upgraded to the latest chart version automatically',
-        'The first release is deleted and replaced by the new installation',
+        'A second set of resources is created alongside the first, both tracked under the name "my-app"',
+        'The command fails with an error because the release name "my-app" is already in use in the namespace',
+        'The existing release is automatically upgraded to the latest available chart version from the repository',
+        'The first release is deleted and then replaced by the new installation under the same release name',
       ],
-      correctIndex: 0,
+      correctIndex: 1,
       explanation:
         'Helm release names must be unique within a namespace. Running `helm install` with an already-used release name ' +
         'returns an error like "cannot re-use a name that is still in use." To update an existing release, use ' +
@@ -147,12 +147,12 @@ export const lessonHelm: Lesson = {
         'You install a chart with `helm install my-app nginx-chart --set replicaCount=5`, then later run ' +
         '`helm upgrade my-app nginx-chart --set image.tag=2.0` without specifying replicaCount. What happens to replicaCount?',
       choices: [
-        'It stays at 5 because Helm remembers all previous --set values',
-        'It reverts to the chart default (e.g., 1 or 3) because --set values are not carried forward automatically on upgrade',
-        'The upgrade fails because replicaCount was not specified',
-        'Helm prompts you to confirm the missing value before proceeding',
+        'It reverts to the chart default because --set values from the prior install are not carried forward on upgrade',
+        'It stays at 5 because Helm merges all previous --set values with the new upgrade automatically',
+        'The upgrade fails with a validation error because replicaCount is a required value that must be specified',
+        'Helm detects the missing override and prompts interactively to confirm before applying the upgrade',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
         'When using --set, only the values you explicitly pass are applied on each upgrade. Previous --set overrides ' +
         'are NOT automatically merged. If the chart default for replicaCount is 3, it silently reverts to 3. ' +
@@ -163,12 +163,12 @@ export const lessonHelm: Lesson = {
       question:
         'You run `helm rollback my-app 1` to revert from revision 2 back to revision 1. What revision number does the release have after the rollback?',
       choices: [
-        'Revision 1 — the release pointer moves back to the original revision',
-        'Revision 2 — rollback modifies the current revision in place',
-        'Revision 3 — rollback creates a new revision with the same config as revision 1',
-        'Revision 0 — rollback resets the revision counter',
+        'Revision 1 — the release pointer moves back to the original revision directly',
+        'Revision 2 — rollback modifies the current revision in place with the old config',
+        'The revision counter is cleared — rollback removes all history and starts fresh',
+        'Revision 3 — rollback creates a new revision that has the same config as revision 1',
       ],
-      correctIndex: 2,
+      correctIndex: 3,
       explanation:
         'Helm rollback does NOT rewind the revision counter. It creates a new revision (3) whose configuration ' +
         'matches the target revision (1). This preserves full audit history — you can see that revision 2 was deployed ' +
@@ -178,12 +178,12 @@ export const lessonHelm: Lesson = {
       question:
         'Your team manages 12 microservices across dev, staging, and production. Why are values files (-f) preferred over --set for production deployments?',
       choices: [
-        '--set is slower than -f because it parses each value individually',
-        '--set cannot handle nested values like image.repository',
-        'Values files are encrypted by default while --set values are stored in plaintext',
-        'Values files are version-controlled, self-documenting, and ensure all overrides are applied consistently on every upgrade',
+        '--set is slower than -f for large value sets because each flag is parsed and validated individually',
+        '--set cannot handle nested YAML values like image.repository or complex array structures in charts',
+        'Values files are version-controlled and self-documenting, ensuring all overrides are applied on every upgrade',
+        'Values files are encrypted at rest by Helm while --set values are persisted in plaintext in the release',
       ],
-      correctIndex: 3,
+      correctIndex: 2,
       explanation:
         'Values files can be committed to Git, code-reviewed, and diffed between environments. They ensure every ' +
         'upgrade carries the complete set of overrides — unlike --set, where forgetting a flag silently reverts ' +

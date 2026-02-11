@@ -154,12 +154,12 @@ export const lessonResourceLimits: Lesson = {
       question:
         'A container has a CPU limit of 500m. During a traffic spike, it tries to use 800m of CPU. What happens?',
       choices: [
-        'The container is killed (OOMKilled) for exceeding its limit',
-        'The CPU limit is automatically raised to accommodate the spike',
-        'The container is evicted from the node and rescheduled on a node with more CPU capacity',
-        'The container is throttled -- it continues running but is restricted to 500m of CPU, making it slower',
+        'The container is throttled -- it keeps running but is restricted to 500m of CPU, making it slower',
+        'The container is killed (OOMKilled) for exceeding its CPU limit, same as it would for memory',
+        'The container is evicted from the node and rescheduled on a node with more available CPU capacity',
+        'The kubelet temporarily raises the CPU limit to the node\'s available capacity during traffic spikes',
       ],
-      correctIndex: 3,
+      correctIndex: 0,
       explanation:
         'CPU and memory limits behave fundamentally differently. CPU is a compressible resource -- when a container exceeds its CPU limit, the kernel throttles it by limiting its CPU time slices. The container keeps running, just slower. Memory is incompressible -- exceeding a memory limit triggers OOMKill because allocated memory cannot be transparently reclaimed. This distinction is crucial: CPU over-limit = degraded performance, memory over-limit = container death. Many engineers mistakenly assume both resources are enforced the same way.',
     },
@@ -167,12 +167,12 @@ export const lessonResourceLimits: Lesson = {
       question:
         'A node is under memory pressure. It has three pods: Pod A (Guaranteed QoS, using 200Mi of its 200Mi request), Pod B (Burstable QoS, using 300Mi with 100Mi requested), and Pod C (BestEffort QoS, using 150Mi). In what order will Kubernetes evict pods?',
       choices: [
-        'Pod B first (highest memory usage), then Pod C, then Pod A',
-        'Pod C first (BestEffort), then Pod B (Burstable exceeding its request), then Pod A (Guaranteed) only as last resort',
-        'All pods are evicted simultaneously and rescheduled',
-        'Pod A first (it is at 100% of its request, so it has no room to shrink)',
+        'Pod B first (highest absolute memory usage), then Pod C, then Pod A last',
+        'Pod A first because it is at 100% of its request and has no capacity to shrink further',
+        'All three pods are evicted simultaneously and rescheduled across the cluster',
+        'Pod C first (BestEffort), then Pod B (Burstable exceeding its request), then Pod A (Guaranteed) as last resort',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'Kubernetes evicts pods based on QoS class in this strict order: BestEffort first (no guarantees at all), then Burstable pods that exceed their requests (Pod B is using 300Mi but only requested 100Mi, making it a prime target), and finally Guaranteed pods only as an absolute last resort. Pod A has Guaranteed QoS because its requests equal its limits, giving it the strongest eviction protection. This is why setting requests=limits for critical services matters -- it provides the highest eviction resistance. Pod B is especially vulnerable because it is consuming 3x its requested amount.',
     },
@@ -180,10 +180,10 @@ export const lessonResourceLimits: Lesson = {
       question:
         'You set a pod with requests of 2Gi memory and limits of 2Gi memory (requests = limits). The cluster has 3 nodes, each with 4Gi total memory and 3Gi already committed to other pod requests. What happens when you create this pod?',
       choices: [
-        'The pod is scheduled on any node -- Kubernetes uses actual memory usage, not requests, for scheduling',
-        'The pod is scheduled but immediately OOMKilled because the node does not have enough physical memory',
+        'The pod is scheduled on any node because Kubernetes uses actual memory usage, not requests, for placement',
+        'Kubernetes preempts lower-priority pods on one node to free up the 2Gi required by this Guaranteed pod',
         'The pod stays Pending with "Insufficient memory" because no node has 2Gi of unrequested memory available',
-        'Kubernetes evicts lower-priority pods to make room for this Guaranteed QoS pod',
+        'The pod is placed on the least-loaded node but is immediately OOMKilled due to insufficient physical memory',
       ],
       correctIndex: 2,
       explanation:
@@ -193,14 +193,30 @@ export const lessonResourceLimits: Lesson = {
       question:
         'A pod has containers with these resource specs: requests.cpu=250m, limits.cpu=1000m, requests.memory=128Mi, limits.memory=512Mi. What QoS class does this pod receive, and why does it matter?',
       choices: [
-        'BestEffort -- because the requests are too low relative to the limits',
-        'Guaranteed -- because both CPU and memory have requests and limits defined',
-        'Burstable -- but this is equivalent to Guaranteed in terms of eviction priority since all resource types are specified',
-        'Burstable -- because requests are lower than limits, meaning it can burst above its guaranteed baseline but is more vulnerable to eviction than Guaranteed pods',
+        'BestEffort -- the requests are far too low relative to limits to count as properly resource-managed',
+        'Burstable -- requests differ from limits, so the pod can burst but faces higher eviction risk than Guaranteed',
+        'Guaranteed -- both CPU and memory have explicit requests and limits defined in the pod spec',
+        'Burstable -- but having all four resource fields set gives it the same eviction protection as Guaranteed',
+      ],
+      correctIndex: 1,
+      explanation:
+        'A pod is Guaranteed ONLY when every container has requests equal to limits for both CPU and memory. Here, requests differ from limits (250m vs 1000m CPU, 128Mi vs 512Mi memory), so the pod is Burstable. This means it gets its requested resources guaranteed but can burst higher when capacity is available. The tradeoff: Burstable pods are evicted before Guaranteed pods under node pressure. Option D is wrong -- Burstable and Guaranteed are NOT equivalent in eviction behavior, even if all resource types are specified. For critical production services, setting requests=limits provides stronger eviction protection at the cost of not being able to burst.',
+    },
+    {
+      question:
+        'A namespace has a LimitRange with default requests of 128Mi memory and default limits of 256Mi memory. A developer deploys a pod without specifying any resource fields. What happens?',
+      choices: [
+        'The pod is rejected -- the LimitRange requires developers to explicitly set resource fields in pod specs',
+        'The pod is created as BestEffort because LimitRanges only apply when partial resource specs already exist',
+        'The LimitRange applies limits=256Mi but leaves requests empty, giving the pod an undefined QoS class',
+        'The LimitRange injects defaults: the pod gets requests=128Mi and limits=256Mi, making it Burstable QoS',
       ],
       correctIndex: 3,
       explanation:
-        'A pod is Guaranteed ONLY when every container has requests equal to limits for both CPU and memory. Here, requests differ from limits (250m vs 1000m CPU, 128Mi vs 512Mi memory), so the pod is Burstable. This means it gets its requested resources guaranteed but can burst higher when capacity is available. The tradeoff: Burstable pods are evicted before Guaranteed pods under node pressure. Option D is wrong -- Burstable and Guaranteed are NOT equivalent in eviction behavior, even if all resource types are specified. For critical production services, setting requests=limits provides stronger eviction protection at the cost of not being able to burst.',
+        'LimitRanges act as an admission controller that injects default resource values into pods that don\'t specify them. ' +
+        'Without the LimitRange, this pod would be BestEffort (no requests, no limits). With the LimitRange, it gets requests=128Mi and limits=256Mi, ' +
+        'which makes it Burstable QoS. This is a crucial safety net: LimitRanges prevent developers from accidentally deploying BestEffort pods ' +
+        'that would be evicted first under node pressure. Most production clusters pair LimitRanges with ResourceQuotas in every namespace.',
     },
   ],
   initialState: () => {

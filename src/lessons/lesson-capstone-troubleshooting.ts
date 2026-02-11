@@ -128,12 +128,12 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       question:
         'A Service named "backend-svc" shows 0 endpoints, but "kubectl get pods" shows 3 backend pods in Running state. What is the most likely cause?',
       choices: [
-        'The pods are Running but not yet Ready -- they may be failing readiness probes',
-        'The Service is in a different namespace than the pods',
+        'The pods are Running but not yet Ready -- they may be failing their configured readiness probes',
         'The Service\'s label selector does not match the labels on the Running pods (e.g., "app: back-end" vs "app: backend")',
-        'The Service port does not match the container port, so endpoints cannot be registered',
+        'The Service is in a different namespace than the pods, so the endpoints controller cannot find them',
+        'The Service port does not match the container port, which prevents endpoints from being registered',
       ],
-      correctIndex: 2,
+      correctIndex: 1,
       explanation:
         'Endpoints are populated by matching the Service\'s selector against pod labels. If there is any mismatch -- even a small one like a hyphen ("back-end" vs "backend") -- the Service finds zero matching pods, resulting in 0 endpoints despite pods being Running. Option A is plausible (only Ready pods become endpoints), but the scenario says pods are Running, and by default pods without readiness probes are considered Ready. Port mismatches do not affect endpoint registration -- they cause connection failures, not missing endpoints.',
     },
@@ -141,12 +141,12 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       question:
         'You are troubleshooting a cluster and find: frontend deployment has 1/3 pods running, backend pods show ImagePullError, one node is NotReady. You only have time to fix one thing first. Which fix restores the most user-facing functionality?',
       choices: [
-        'Uncordon the NotReady node to add scheduling capacity',
-        'Fix the backend image name so backend pods can start',
-        'Scale the frontend deployment to match available capacity',
-        'Fix the backend image first because ImagePullError blocks the entire deployment pipeline',
+        'Uncordon the NotReady node to restore scheduling capacity for all pending pods',
+        'Scale the frontend deployment down to 1 replica to match available node capacity',
+        'Delete and recreate both deployments to force a clean state across the entire cluster',
+        'Fix the backend image name so backend pods can start and restore that application tier',
       ],
-      correctIndex: 1,
+      correctIndex: 3,
       explanation:
         'Fixing the backend image unblocks all backend pods from starting, which restores an entire tier of the application. The frontend already has 1 pod running (partial service). Uncordoning a node helps with capacity but does not fix the root cause of the backend failure. In production triage, restoring a completely broken tier (0 pods serving) takes priority over scaling up a partially working one (1/3 pods serving). This tests the ability to prioritize based on impact, not just alphabetical order of symptoms.',
     },
@@ -154,10 +154,10 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       question:
         'After running "kubectl get events", you see both "FailedScheduling: 0/3 nodes are available" and "ImagePullError: image not found" warnings. These are for pods in the same deployment. What does this tell you about the deployment?',
       choices: [
-        'The deployment has two separate problems that need to be fixed independently',
-        'The FailedScheduling is caused by the ImagePullError -- fixing the image will resolve both',
-        'Some pods failed at the scheduling phase while others were scheduled but could not pull the image -- the deployment created multiple pods and they hit different failure points',
-        'The events are stale and may not reflect the current state -- always check pod status first',
+        'The FailedScheduling is caused by the ImagePullError -- fixing the image name will resolve both issues',
+        'The events are stale from a previous rollout and may not reflect the current deployment state',
+        'Some pods failed at scheduling while others were scheduled but failed to pull the image -- multiple failure points in one deployment',
+        'The deployment has two independent problems, but FailedScheduling always takes priority over ImagePullError in triage',
       ],
       correctIndex: 2,
       explanation:
@@ -167,10 +167,10 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       question:
         'A colleague says: "The pods keep crashing, so I\'ll just delete them and let Kubernetes recreate them." Under what condition would this actually solve the problem?',
       choices: [
-        'It would solve the problem if the crash is caused by a corrupted container filesystem or stale cached state that gets cleared on pod recreation',
-        'It would always work because Kubernetes creates fresh pods from the current deployment spec',
-        'It would never work because the new pods will use the same image and configuration, so they will crash the same way',
-        'It would only work if you also restart the node the pods were running on',
+        'It would work if the crash is caused by corrupted container-local state or a transient dependency that is now available',
+        'It would always work because Kubernetes creates fresh pods from the current deployment spec each time',
+        'It would never work because new pods use the same image and config, so they will crash identically',
+        'It would only work if you also restart the node to clear its container runtime cache simultaneously',
       ],
       correctIndex: 0,
       explanation:

@@ -122,12 +122,12 @@ export const lessonClusterAutoscaling: Lesson = {
         'HPA has scaled your deployment to 10 pods. You have 3 nodes, each with capacity for 3 pods (9 total). ' +
         'One pod is stuck in Pending with reason "Unschedulable." What happens next if Karpenter is installed?',
       choices: [
-        'Karpenter sees the Unschedulable pod and provisions a new node with enough capacity to run it',
-        'Karpenter increases CPU limits on existing nodes so they can fit one more pod',
-        'The HPA detects the Pending pod and reduces desired replicas back to 9',
-        'The Pending pod is automatically rescheduled to the node with the lowest CPU usage',
+        'The HPA detects that a pod is Pending and reduces the desired replica count back to 9 to match capacity',
+        'The scheduler retries placement and assigns the pod to the node with the lowest current CPU utilization',
+        'Karpenter adjusts resource limits on existing nodes so they can accommodate one additional pod',
+        'Karpenter detects the Unschedulable pod and provisions a new node with enough capacity to run it',
       ],
-      correctIndex: 0,
+      correctIndex: 3,
       explanation:
         'Karpenter watches for pods with Unschedulable status. When it finds one, it evaluates the pod\'s resource ' +
         'requirements and provisions a new node that can accommodate it. This is the HPA-to-node-autoscaler pipeline: ' +
@@ -139,12 +139,12 @@ export const lessonClusterAutoscaling: Lesson = {
         'Karpenter decides to consolidate an underutilized node that is running 2 pods owned by a Deployment. ' +
         'How does it "move" the pods to other nodes?',
       choices: [
-        'It live-migrates the running containers to another node, preserving their memory state',
-        'It uses `kubectl drain` to gracefully migrate pods using Kubernetes native pod migration',
-        'It deletes the pods from the underutilized node, trusting the Deployment controller to recreate them on nodes with capacity',
-        'It updates each pod\'s nodeName field to point to a different node, and the kubelet picks them up',
+        'It uses `kubectl drain` to invoke the native Kubernetes pod migration feature that transfers running pods',
+        'It deletes the pods from the underutilized node and trusts the Deployment controller to recreate them elsewhere',
+        'It live-migrates the running containers to another node while preserving their in-memory state and connections',
+        'It patches each pod\'s nodeName field to point to a different node, and the target kubelet picks them up',
       ],
-      correctIndex: 2,
+      correctIndex: 1,
       explanation:
         'Kubernetes does not support live migration of pods. Karpenter cordons the node (preventing new scheduling), ' +
         'then deletes the pods. Since the pods are owned by a Deployment (via ReplicaSet), the controller detects ' +
@@ -157,12 +157,12 @@ export const lessonClusterAutoscaling: Lesson = {
         'Your cluster uses the traditional Cluster Autoscaler with a node group of m5.large instances (2 vCPU, 8GiB RAM). ' +
         'A new pod requests 4 vCPU and 32GiB RAM. What happens?',
       choices: [
-        'The Cluster Autoscaler provisions two m5.large nodes and splits the pod across them',
-        'The Cluster Autoscaler adds an m5.large node, but the pod still cannot be scheduled because no single node in the group satisfies its requirements',
-        'The Cluster Autoscaler automatically switches to a larger instance type that fits the pod',
-        'The pod is scheduled on the existing nodes with over-committed resources',
+        'The Cluster Autoscaler adds an m5.large node, but the pod remains Unschedulable because no single node satisfies its requirements',
+        'The Cluster Autoscaler provisions two m5.large nodes and distributes the pod\'s resource requests across them',
+        'The Cluster Autoscaler detects the mismatch and automatically switches the node group to a larger instance type',
+        'The pod is scheduled on existing nodes using resource overcommit since the total cluster capacity is sufficient',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
         'The traditional Cluster Autoscaler can only scale existing node groups — it cannot change instance types. ' +
         'If the node group uses m5.large (2 vCPU, 8GiB), adding more m5.large nodes will not help a pod that needs ' +
@@ -175,12 +175,12 @@ export const lessonClusterAutoscaling: Lesson = {
         'One of those pods has a PodDisruptionBudget requiring at least 2 replicas available at all times, and the Deployment ' +
         'currently has exactly 2 Running replicas. What does Karpenter do?',
       choices: [
-        'Karpenter deletes all 3 pods simultaneously to consolidate the node as fast as possible',
-        'Karpenter ignores the PDB and terminates the node because cost savings take priority',
-        'Karpenter waits exactly 5 minutes then proceeds with consolidation regardless of the PDB',
-        'Karpenter respects the PDB and will not disrupt the pod if doing so would violate the minimum availability requirement',
+        'Karpenter evicts all 3 pods simultaneously to consolidate the node and minimize the time spent underutilized',
+        'Karpenter proceeds with consolidation after a fixed cooldown period regardless of the current PDB status',
+        'Karpenter respects the PDB and will not disrupt the pod if doing so would violate the minimum availability rule',
+        'Karpenter marks the node for deferred consolidation and retries only during the next maintenance window',
       ],
-      correctIndex: 3,
+      correctIndex: 2,
       explanation:
         'Karpenter respects PodDisruptionBudgets during consolidation. If evicting a pod would bring the number of available ' +
         'replicas below what the PDB requires, Karpenter will not proceed with that eviction. In this case, with exactly ' +

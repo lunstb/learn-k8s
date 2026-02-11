@@ -88,13 +88,27 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
         message: `Successfully assigned ${pod.metadata.name} to ${availableNode.metadata.name}`,
       });
     } else {
-      // No capacity -- mark as unschedulable
+      // Build a descriptive failure message
+      const taintRejected = readyNodes.length > toleratedNodes.length;
+      const taintCount = readyNodes.length - toleratedNodes.length;
+      const capacityFull = toleratedNodes.length > 0 && toleratedNodes.every((n) => {
+        const allocated = nodeAllocations.get(n.metadata.name) || 0;
+        return allocated >= n.spec.capacity.pods;
+      });
+      const parts: string[] = [];
+      if (taintRejected) parts.push(`${taintCount} node(s) had taints that the pod didn't tolerate`);
+      if (capacityFull) parts.push(`${toleratedNodes.length} node(s) had insufficient capacity`);
+      const unready = cluster.nodes.length - readyNodes.length;
+      if (unready > 0) parts.push(`${unready} node(s) were not ready or unschedulable`);
+      if (parts.length === 0) parts.push('no nodes have sufficient capacity');
+      const failMessage = `0/${cluster.nodes.length} nodes are available: ${parts.join(', ')}`;
+
       pod.status.reason = 'Unschedulable';
-      pod.status.message = 'No nodes have sufficient capacity';
+      pod.status.message = failMessage;
       actions.push({
         controller: 'Scheduler',
         action: 'fail',
-        details: `Pod ${pod.metadata.name} is unschedulable (no node capacity)`,
+        details: `Pod ${pod.metadata.name} is unschedulable (${parts.join(', ')})`,
       });
       events.push({
         timestamp: Date.now(),
@@ -103,7 +117,7 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
         reason: 'FailedScheduling',
         objectKind: 'Pod',
         objectName: pod.metadata.name,
-        message: `0/${cluster.nodes.length} nodes are available: no nodes have sufficient capacity`,
+        message: failMessage,
       });
     }
   }

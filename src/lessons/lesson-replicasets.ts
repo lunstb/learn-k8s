@@ -120,12 +120,12 @@ export const lessonReplicaSets: Lesson = {
       question:
         'A ReplicaSet has selector app=web and replicas=3, with 3 Running pods. You manually create a new pod with label app=web. What happens?',
       choices: [
+        'The RS adopts the pod and updates its desired replica count to 4 to match the actual state',
+        'The manually created pod is rejected by the scheduler because the label is already claimed by the RS',
         'The RS now sees 4 pods matching its selector but only wants 3, so it terminates one pod to reconcile',
-        'The RS ignores the manually created pod because it didn\'t create it',
-        'The RS adopts the pod and increases its desired count to 4',
-        'The new pod is rejected by the API server because the label is already in use',
+        'The RS ignores the pod because it lacks the correct ownerReference pointing to the RS',
       ],
-      correctIndex: 0,
+      correctIndex: 2,
       explanation:
         'ReplicaSets use label selectors, not ownership records, to count pods. Any pod matching the selector is counted regardless of who created it. ' +
         'With 4 matching pods and a desired count of 3, the RS sees an excess and deletes one. It might even delete your manually created pod — or one of the originals. ' +
@@ -135,12 +135,12 @@ export const lessonReplicaSets: Lesson = {
       question:
         'You scale a Deployment from 5 to 2 replicas. Which pods does Kubernetes terminate?',
       choices: [
-        'The 3 oldest pods, preserving the newest ones that are most likely running updated code',
-        'A random selection of 3 pods',
         'The 3 newest pods, preserving the oldest long-running pods that have proven stable',
-        'It terminates all 5 and recreates 2 fresh pods',
+        'The 3 oldest pods, preserving the newest ones that are most likely running updated code',
+        'A random selection of 3 pods chosen by the scheduler\'s load-balancing algorithm',
+        'All pods on the least-utilized node are terminated first to free up node resources',
       ],
-      correctIndex: 2,
+      correctIndex: 0,
       explanation:
         'Kubernetes terminates the most recently created pods first when scaling down. The reasoning is that older pods have been running longer and are proven stable, ' +
         'while newer pods have had less time to demonstrate reliability. This also minimizes disruption — the newest pods have likely received the least traffic and built up the least in-memory state. ' +
@@ -150,12 +150,12 @@ export const lessonReplicaSets: Lesson = {
       question:
         'You have a bare ReplicaSet (no Deployment) running 3 pods with image nginx:1.0. You update the RS template to nginx:2.0. What happens to the existing pods?',
       choices: [
-        'All 3 pods are immediately updated to nginx:2.0 in-place',
-        'The RS performs a rolling update, replacing pods one at a time',
+        'All 3 pods are immediately updated to nginx:2.0 via an in-place container image swap',
+        'The RS performs a rolling update, replacing pods one at a time with the new image',
+        'The RS deletes all 3 pods simultaneously and recreates them with the nginx:2.0 template',
         'Nothing — existing pods keep running nginx:1.0; only newly created pods will use nginx:2.0',
-        'The RS deletes all pods and recreates them with nginx:2.0',
       ],
-      correctIndex: 2,
+      correctIndex: 3,
       explanation:
         'This is exactly why Deployments exist. A ReplicaSet only cares about pod count, not pod content. Changing the template affects future pods, ' +
         'but existing pods are immutable and remain unchanged. To actually roll out a new image, you need a Deployment, which creates a new ReplicaSet ' +
@@ -165,12 +165,12 @@ export const lessonReplicaSets: Lesson = {
       question:
         'A ReplicaSet has selector app=api, version=v2. A pod has labels app=api, version=v1. Does the RS manage this pod?',
       choices: [
-        'Yes — the app=api label matches, which is sufficient',
-        'No — but only because the pod was created before the ReplicaSet',
-        'Yes — Kubernetes matches on any overlapping label',
+        'Yes — the app=api label matches, and partial label overlap is enough for the selector to claim the pod',
         'No — the selector requires ALL specified labels to match, and version=v1 does not equal version=v2',
+        'No — but only because the pod was created before the ReplicaSet existed in the namespace',
+        'Yes — Kubernetes uses OR logic for multi-label selectors, so matching either label is sufficient',
       ],
-      correctIndex: 3,
+      correctIndex: 1,
       explanation:
         'Label selectors require ALL key-value pairs to match. The selector {app=api, version=v2} matches only pods that have both app=api AND version=v2. ' +
         'A pod with version=v1 does not satisfy the selector, even though app=api matches. This AND logic is how Deployments use the pod-template-hash label ' +

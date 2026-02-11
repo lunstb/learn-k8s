@@ -92,21 +92,20 @@ spec:
           'A Service gives pods a stable identity. Clients talk to the Service name, which never changes. Only Running pods matching the selector become endpoints — unhealthy pods are automatically excluded.',
       },
       {
-        title: 'How Endpoints Work',
+        title: 'How Services Route Traffic',
         content:
-          'Behind every Service is an endpoints controller that continuously reconciles the endpoint list. ' +
-          'On every reconciliation cycle, it performs a simple process: find all pods in the cluster whose labels match ' +
-          'the Service selector, filter to only those in Running phase, and update the endpoint list with their IPs.\n\n' +
-          'Pods in Pending phase are excluded because they are not yet ready to handle requests — their containers ' +
-          'may still be starting up. Pods in Failed or Terminating phase are also excluded because they can no longer serve traffic.\n\n' +
-          'This design means the endpoint list is always up to date without any manual intervention. ' +
-          'When you scale a Deployment from 3 to 5, the 2 new pods start as Pending (not endpoints), ' +
-          'then transition to Running (automatically become endpoints). When you scale down, terminated pods ' +
-          'are automatically removed from the endpoint list.\n\n' +
-          'During a rolling update, the same logic applies: old pods that are still Running remain endpoints, ' +
-          'while new pods become endpoints as soon as they are Running. This ensures continuous traffic serving throughout the update.',
+          'When you create a Service, it gets a virtual IP address called a ClusterIP. This IP does not belong to any ' +
+          'single pod — it is a stable address that Kubernetes manages for you. A component called kube-proxy, running ' +
+          'on every node, watches for Services and their endpoints, then sets up networking rules so that traffic sent ' +
+          'to the ClusterIP is forwarded to one of the matching pods.\n\n' +
+          'The endpoint list updates automatically. When you scale a Deployment from 3 to 5, the new pods become ' +
+          'endpoints as soon as they are Running. When you scale down or a pod is replaced, terminated pods are ' +
+          'removed from the list. During rolling updates, old pods keep serving while new pods join the endpoint ' +
+          'list as they become ready — ensuring zero downtime.\n\n' +
+          'By default, kube-proxy distributes traffic roughly evenly across endpoints. If you need a client to ' +
+          'stick to the same pod across requests, you can enable session affinity on the Service.',
         keyTakeaway:
-          'Endpoints update automatically through the same reconciliation loop that powers everything else in Kubernetes. You never manually register or deregister pods — the system handles it.',
+          'kube-proxy routes traffic from the Service virtual IP to healthy pods. Endpoints update automatically as pods come and go — you never manage them manually.',
       },
       {
         title: 'Service Types',
@@ -130,12 +129,12 @@ spec:
       question:
         'Your pods have label app=api but the Service selector is app=API (capital letters). How many endpoints does the Service have?',
       choices: [
-        'All the Running pods — Kubernetes label matching is case-insensitive',
-        'Zero — Kubernetes labels are case-sensitive, so app=API does not match app=api',
-        'It depends on the Service type (ClusterIP vs NodePort)',
-        'The Service creation fails because "API" is not a valid label value',
+        'Zero — Kubernetes labels are case-sensitive, so app=API does not match app=api and no pods are selected',
+        'All the Running pods — Kubernetes normalizes label values to lowercase before matching selectors',
+        'It depends on the namespace — labels are case-sensitive across namespaces but case-insensitive within one',
+        'The Service is created but enters a degraded state because the selector format is considered invalid',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
         'Kubernetes labels are strictly case-sensitive. "api" and "API" are different values. The Service selector app=API will not match pods with app=api, ' +
         'resulting in zero endpoints. This is a common and frustrating debugging scenario — the Service exists and looks correct, but no traffic reaches your pods. ' +
@@ -145,12 +144,12 @@ spec:
       question:
         'You have 5 pods with label app=web. Three are Running, one is Pending, and one is Terminating. A Service selects app=web. During this moment, how many endpoints does the Service have?',
       choices: [
-        '5 — all pods matching the selector are endpoints',
-        '3 — only Running pods become endpoints; Pending and Terminating pods are excluded',
-        '4 — only the Terminating pod is excluded',
-        '1 — Kubernetes picks only the healthiest pod',
+        '5 — all pods matching the selector are registered as endpoints regardless of their phase',
+        '4 — only the Terminating pod is excluded since it has begun its graceful shutdown process',
+        '3 — only Running pods become endpoints; Pending and Terminating pods are excluded from the list',
+        '1 — Kubernetes selects only the pod with the lowest resource usage to avoid overloading endpoints',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
         'The endpoints controller filters on two criteria: the pod must match the Service selector AND the pod must be in the Running phase. ' +
         'Pending pods are not ready to accept traffic (containers may still be starting). Terminating pods are shutting down and will soon be gone. ' +
@@ -160,12 +159,12 @@ spec:
       question:
         'A NodePort Service is exposed on port 31000. You have 3 nodes and 2 pods running on node-1. A client sends a request to node-2:31000. What happens?',
       choices: [
-        'The request fails because no pods are running on node-2',
-        'The request is queued until a pod is scheduled on node-2',
-        'NodePort only works on nodes that are running matching pods',
-        'The request is routed to one of the pods on node-1 — NodePort forwards traffic from any node to any matching endpoint in the cluster',
+        'The request fails because no matching pods are currently running on node-2 to handle it',
+        'The request is routed to one of the pods on node-1 — NodePort forwards from any node to any endpoint',
+        'The request is queued by kube-proxy on node-2 until a matching pod is scheduled on that node',
+        'NodePort routing only works on nodes where matching pods exist, so node-2 drops the connection',
       ],
-      correctIndex: 3,
+      correctIndex: 1,
       explanation:
         'NodePort exposes the Service on the same port across ALL nodes, regardless of where the pods actually run. ' +
         'kube-proxy on each node handles the forwarding. When node-2 receives the request on port 31000, it routes it to one of the Running endpoints — ' +
@@ -176,17 +175,49 @@ spec:
       question:
         'You create a ClusterIP Service for your frontend pods, but external users on the internet cannot reach it. Why?',
       choices: [
-        'ClusterIP Services are only accessible from within the cluster — use NodePort or LoadBalancer for external access',
-        'ClusterIP requires a DNS entry to be manually created first',
-        'Frontend pods cannot be exposed through Services',
-        'ClusterIP is deprecated; you should use Ingress instead',
+        'ClusterIP requires a DNS provider integration to be configured before external access is possible',
+        'The Service needs a publicIP annotation added to its spec before it can accept external traffic',
+        'ClusterIP Services require an Ingress controller to be installed to translate external requests',
+        'ClusterIP Services are only accessible from within the cluster — use NodePort or LoadBalancer instead',
       ],
-      correctIndex: 0,
+      correctIndex: 3,
       explanation:
         'ClusterIP is the default Service type and only assigns an internal virtual IP. It is intended for pod-to-pod communication within the cluster ' +
         '(e.g., your frontend talking to your backend API). For external traffic, you need NodePort (exposes on every node\'s IP at a static port) ' +
         'or LoadBalancer (provisions a cloud load balancer with an external IP). Ingress is a separate resource that routes HTTP traffic but typically still ' +
         'requires a LoadBalancer or NodePort Service behind it.',
+    },
+    {
+      question:
+        'A Service is defined with port: 80 and targetPort: 3000. A client inside the cluster sends a request to the Service on port 80. Where does the request go?',
+      choices: [
+        'The request fails because the Service port and the container port must be identical to work',
+        'The request is routed to port 80 on the pod, and the pod internally redirects it to 3000',
+        'The request is routed to port 3000 on a matching pod — "port" is the Service listener, "targetPort" is the container port',
+        'The request is duplicated to both port 80 and port 3000 on the pod for redundancy purposes',
+      ],
+      correctIndex: 2,
+      explanation:
+        'The "port" field is what the Service listens on — it\'s the port clients use to reach the Service. ' +
+        'The "targetPort" field is the port on the actual pod containers. The Service translates between them: incoming traffic on port 80 ' +
+        'is forwarded to port 3000 on the pods. This lets you expose a standard port (80 for HTTP) even if your application listens on a different port (3000). ' +
+        'If targetPort is omitted, it defaults to the same value as port.',
+    },
+    {
+      question:
+        'During a rolling update, some pods are Running but their readiness probes have not yet passed. A Service selects these pods. Do they receive traffic?',
+      choices: [
+        'Yes — all Running pods matching the selector become endpoints regardless of readiness status',
+        'No — only pods that are both Running AND passing readiness probes are included in endpoints',
+        'Yes — readiness probes are only evaluated during initial pod startup, not during rolling updates',
+        'It depends on whether the rolling update uses maxSurge or maxUnavailable for its strategy',
+      ],
+      correctIndex: 1,
+      explanation:
+        'The endpoints controller checks two conditions: the pod must match the Service selector AND the pod must be Ready. ' +
+        'During a rolling update, new pods start Running but their readiness probes may not pass immediately (the application needs time to initialize). ' +
+        'Until readiness passes, these pods are NOT in the Service endpoints and receive no traffic. Old pods continue serving until the new ones are ready. ' +
+        'This is the mechanism behind zero-downtime rolling updates — traffic only shifts to new pods after they prove they can handle it.',
     },
   ],
   initialState: () => {

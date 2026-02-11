@@ -45,6 +45,17 @@ export const lessonNamespaces: Lesson = {
           'Namespaces solve this by creating logical partitions within a cluster. Each namespace is an independent ' +
           'scope for resource names. Two teams can each have a deployment called "api" as long as they live in ' +
           'different namespaces. Think of namespaces as folders on a filesystem — they organize resources and prevent conflicts.',
+        diagram:
+          'Cluster\\n' +
+          '┌─────────────────────────────────────────────┐\\n' +
+          '│  Namespace: default    Namespace: production │\\n' +
+          '│  ┌─────────────┐      ┌─────────────┐      │\\n' +
+          '│  │ pod: api    │      │ pod: api    │      │\\n' +
+          '│  │ svc: api    │      │ svc: api    │      │\\n' +
+          '│  │ cm: config  │      │ cm: config  │      │\\n' +
+          '│  └─────────────┘      └─────────────┘      │\\n' +
+          '│        Same names, completely isolated       │\\n' +
+          '└─────────────────────────────────────────────┘',
         keyTakeaway:
           'Namespaces partition a cluster into logical groups. They prevent name collisions and provide a boundary for access control and resource quotas.',
       },
@@ -118,12 +129,12 @@ export const lessonNamespaces: Lesson = {
       question:
         'A pod in the "frontend" namespace needs to call a service named "api" in the "backend" namespace. A junior engineer says this is impossible because namespaces isolate workloads. Is this correct?',
       choices: [
-        'Yes -- namespaces provide full network isolation, so cross-namespace traffic is blocked by default',
-        'No -- namespaces only isolate resource names, not network traffic. The pod can reach the service at api.backend.svc.cluster.local',
-        'No -- but it requires creating a ServiceExport resource to explicitly allow cross-namespace communication',
-        'Yes -- unless you create an identical Service definition in the frontend namespace pointing to the backend pods',
+        'No -- namespaces isolate resource names, not network traffic; the pod can reach the service at api.backend.svc.cluster.local',
+        'Yes -- namespaces provide full network isolation by default, so cross-namespace traffic is blocked',
+        'No -- but the admin must first create a ServiceExport to allow cross-namespace DNS resolution',
+        'Yes -- unless a NetworkPolicy explicitly permits traffic between the two namespaces',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
         'This is one of the most common misconceptions about namespaces. Namespaces provide name scoping and a boundary for RBAC and quotas, but they do NOT isolate network traffic. Any pod can reach any service in any namespace using the fully qualified DNS name: <service>.<namespace>.svc.cluster.local. To actually restrict cross-namespace traffic, you need Network Policies, which are a separate resource. Many teams mistakenly believe deploying to separate namespaces gives them network segmentation.',
     },
@@ -132,11 +143,11 @@ export const lessonNamespaces: Lesson = {
         'Which of the following resources is cluster-scoped (NOT namespace-scoped)?',
       choices: [
         'ConfigMap',
-        'Deployment',
         'Node',
         'Service',
+        'Deployment',
       ],
-      correctIndex: 2,
+      correctIndex: 1,
       explanation:
         'Nodes are cluster-scoped -- they exist outside any namespace because they are physical or virtual machines shared by the entire cluster. Other cluster-scoped resources include Namespaces themselves, PersistentVolumes, ClusterRoles, and ClusterRoleBindings. By contrast, ConfigMaps, Deployments, Services, Pods, and Secrets are all namespace-scoped. Understanding which resources are cluster-scoped vs namespace-scoped matters for RBAC, because granting access to cluster-scoped resources affects the entire cluster.',
     },
@@ -144,12 +155,12 @@ export const lessonNamespaces: Lesson = {
       question:
         'Two teams both deploy a service called "api" -- Team A in the "team-a" namespace and Team B in the "team-b" namespace. A pod in "team-a" calls "http://api:8080". Which service does it reach?',
       choices: [
-        'It reaches the "api" service in the "team-a" namespace, because short DNS names resolve within the pod\'s own namespace',
-        'The request fails because "api" is ambiguous and exists in multiple namespaces',
-        'It reaches whichever "api" service was created first',
-        'Kubernetes load-balances between both "api" services across namespaces',
+        'The request fails because Kubernetes cannot resolve an ambiguous service name present in multiple namespaces',
+        'It reaches whichever "api" service was created first, since creation order determines DNS priority',
+        'It reaches the "api" service in "team-a", because short DNS names resolve within the calling pod\'s own namespace',
+        'Kubernetes round-robins between both "api" services since they share the same DNS short name',
       ],
-      correctIndex: 0,
+      correctIndex: 2,
       explanation:
         'Short service names (without the namespace suffix) resolve within the calling pod\'s own namespace. So a pod in "team-a" calling "api" reaches team-a\'s api service. To reach team-b\'s service, it must use the qualified name "api.team-b" or "api.team-b.svc.cluster.local". This is the core value of namespace name-scoping: two teams can use identical resource names without conflict, and the DNS resolution is predictable based on the caller\'s namespace.',
     },
@@ -157,14 +168,40 @@ export const lessonNamespaces: Lesson = {
       question:
         'You set a ResourceQuota on the "dev" namespace limiting it to 10 pods. A developer tries to scale a deployment to 12 replicas. What happens?',
       choices: [
-        'The deployment scales to 12 but the extra 2 pods are immediately evicted',
-        'The deployment spec updates to 12 replicas, but only 10 pods are created -- the remaining 2 stay Pending with a "Forbidden: exceeded quota" event',
-        'The ResourceQuota is ignored because quotas only apply to new deployments, not scaling existing ones',
-        'The API server rejects the scale command entirely and the deployment stays at its current replica count',
+        'The API server rejects the scale command and the deployment remains at its current replica count',
+        'The deployment scales to 12 but the excess 2 pods are immediately evicted by the quota controller',
+        'The ResourceQuota is soft-enforced, logging a warning but allowing all 12 pods to be created',
+        'The deployment spec updates to 12, but only 10 pods are created -- the remaining 2 are rejected with a quota exceeded event',
+      ],
+      correctIndex: 3,
+      explanation:
+        'ResourceQuotas are enforced at pod creation time, not at the deployment spec level. The deployment spec successfully updates to 12 replicas, and the ReplicaSet tries to create 12 pods. The first 10 succeed, but pods 11 and 12 are rejected by the admission controller with a quota exceeded error. The deployment shows a mismatch between desired and actual replicas, and events reveal the quota violation. This is important to understand because the deployment itself does not fail -- it just cannot reach its desired state.',
+    },
+    {
+      question:
+        'A developer creates a pod in the "dev" namespace. The namespace has no LimitRange, and the developer does not set any resource requests or limits. What QoS class does the pod get?',
+      choices: [
+        'Guaranteed — Kubernetes assigns generous default requests and limits automatically',
+        'BestEffort — no requests or limits means the lowest QoS class, evicted first under node pressure',
+        'Burstable — Kubernetes injects a small default memory request but leaves limits unset',
+        'The pod creation is rejected because every namespace requires a LimitRange for pod admission',
       ],
       correctIndex: 1,
       explanation:
-        'ResourceQuotas are enforced at pod creation time, not at the deployment spec level. The deployment spec successfully updates to 12 replicas, and the ReplicaSet tries to create 12 pods. The first 10 succeed, but pods 11 and 12 are rejected by the admission controller with a quota exceeded error. The deployment shows a mismatch between desired and actual replicas, and events reveal the quota violation. This is important to understand because the deployment itself does not fail -- it just cannot reach its desired state.',
+        'Without a LimitRange in the namespace, Kubernetes does not inject any default resource values. A pod with no requests or limits receives BestEffort QoS — the lowest priority. Under node memory pressure, BestEffort pods are evicted first. This is why LimitRanges are important: they set default resource requests and limits for pods that don\'t specify them, preventing accidental BestEffort workloads. Many production clusters require LimitRanges in every namespace as a safety net.',
+    },
+    {
+      question:
+        'A cluster admin wants to ensure that the "payments" team can only view Secrets in their own namespace, not in the "orders" namespace. What Kubernetes mechanism enforces this?',
+      choices: [
+        'Namespaces enforce this automatically — resources in one namespace are invisible to users in another namespace',
+        'Network Policies can be configured to restrict cross-namespace access to Secrets at the API level',
+        'ResourceQuotas can be set per namespace to restrict which resource types a team is allowed to access',
+        'RBAC — a Role in the "payments" namespace grants Secret read access, bound to the team\'s ServiceAccount; no Role in "orders" means no access',
+      ],
+      correctIndex: 3,
+      explanation:
+        'Namespaces provide name scoping but NOT access control by themselves. Without RBAC, any authenticated user could read resources in any namespace. RBAC (Role-Based Access Control) is the mechanism that restricts access: a Role defines permissions within a namespace, and a RoleBinding grants those permissions to a user or ServiceAccount. If the team has a Role allowing Secret reads only in "payments", they cannot read Secrets in "orders". This is why namespaces and RBAC work together — namespaces provide the boundary, RBAC enforces it.',
     },
   ],
   initialState: () => {

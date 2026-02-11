@@ -63,6 +63,26 @@ export const glossary: Record<string, string> = {
   'Rolling Update': 'A Deployment strategy that gradually replaces old Pods with new ones, ensuring zero-downtime upgrades.',
   'Liveness Probe': 'A periodic health check that restarts a container if it fails. Detects deadlocks and unrecoverable errors.',
   'Readiness Probe': 'A periodic check that removes a Pod from Service traffic if it fails. Ensures only ready Pods receive requests.',
+  'Startup Probe': 'A probe that runs during container startup, suspending liveness and readiness probes until it passes. Prevents slow-starting apps from being killed prematurely.',
   'Resource Requests': 'The minimum CPU/memory a container needs. The Scheduler uses requests to decide which Node can fit the Pod.',
   'Resource Limits': 'The maximum CPU/memory a container may use. Exceeding memory limits causes an OOM kill; CPU is throttled.',
+
+  // Scheduling
+  'Taint': 'A property on a Node that repels Pods unless they have a matching toleration. Effects: NoSchedule, PreferNoSchedule, NoExecute.',
+  'Toleration': 'A Pod property that allows it to be scheduled on a Node with a matching taint. Tolerations are permissive, not prescriptive.',
+  'Topology Spread Constraint': 'A scheduling rule that distributes Pods evenly across failure domains (zones, nodes) to improve availability.',
+
+  // Reliability
+  'PodDisruptionBudget': 'Limits how many Pods from a set can be voluntarily disrupted at once. Protects availability during drains, upgrades, and autoscaler consolidation.',
+  'Graceful Shutdown': 'The sequence when a Pod terminates: endpoints removed, preStop hook, SIGTERM, grace period, SIGKILL. Allows in-flight requests to complete.',
+
+  // Containers
+  'Init Container': 'A container that runs to completion before the main containers start. Used for dependency checks, migrations, and configuration setup.',
+
+  // Extensibility
+  'CRD': 'Custom Resource Definition — extends the Kubernetes API with new resource types. CRDs are just data; an operator (controller) adds behavior.',
+  'Operator': 'A CRD paired with a custom controller that encodes operational knowledge (install, upgrade, backup, failover) into software following the Kubernetes reconciliation model.',
+
+  // DNS
+  'CoreDNS': 'The cluster DNS server that provides service discovery. Every Service gets a DNS record: <svc>.<ns>.svc.cluster.local.',
 };

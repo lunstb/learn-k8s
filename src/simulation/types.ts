@@ -36,6 +36,7 @@ export interface PodSpec {
   resources?: ResourceRequirements;
   livenessProbe?: Probe;
   readinessProbe?: Probe;
+  startupProbe?: Probe;
   envFrom?: { configMapRef?: string; secretRef?: string }[];
   env?: { name: string; value?: string; valueFrom?: { configMapKeyRef?: { name: string; key: string }; secretKeyRef?: { name: string; key: string } } }[];
   completionTicks?: number;
@@ -43,6 +44,7 @@ export interface PodSpec {
   logs?: string[];
   tolerations?: { key: string; operator?: 'Equal' | 'Exists'; value?: string; effect?: string }[];
   volumes?: Array<{ name: string; persistentVolumeClaim?: { claimName: string } }>;
+  initContainers?: { name: string; image: string; failureMode?: 'fail' }[];
 }
 
 export type PodPhase = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Terminating' | 'CrashLoopBackOff';
@@ -55,6 +57,8 @@ export interface PodStatus {
   restartCount?: number;
   ready?: boolean;
   cpuUsage?: number;
+  initContainerStatuses?: { name: string; state: 'waiting' | 'running' | 'completed' }[];
+  startupProbeCompleted?: boolean;
 }
 
 export interface Pod {
@@ -314,6 +318,19 @@ export interface PersistentVolumeClaim {
   status: { phase: 'Pending' | 'Bound'; volumeName?: string };
 }
 
+// --- PodDisruptionBudget ---
+
+export interface PodDisruptionBudget {
+  kind: 'PodDisruptionBudget';
+  metadata: ObjectMeta;
+  spec: {
+    selector: Record<string, string>;
+    minAvailable?: number;
+    maxUnavailable?: number;
+  };
+  status: { disruptionsAllowed: number; currentHealthy: number; desiredHealthy: number; expectedPods: number };
+}
+
 // --- Helm ---
 
 export interface HelmRelease {
@@ -323,7 +340,7 @@ export interface HelmRelease {
   deploymentName: string;
 }
 
-export type KubeObject = Pod | ReplicaSet | Deployment | SimNode | Service | Namespace | ConfigMap | Secret | Ingress | StatefulSet | DaemonSet | Job | CronJob | HorizontalPodAutoscaler | StorageClass | PersistentVolume | PersistentVolumeClaim;
+export type KubeObject = Pod | ReplicaSet | Deployment | SimNode | Service | Namespace | ConfigMap | Secret | Ingress | StatefulSet | DaemonSet | Job | CronJob | HorizontalPodAutoscaler | StorageClass | PersistentVolume | PersistentVolumeClaim | PodDisruptionBudget;
 
 export interface ClusterState {
   pods: Pod[];
@@ -344,6 +361,7 @@ export interface ClusterState {
   storageClasses: StorageClass[];
   persistentVolumes: PersistentVolume[];
   persistentVolumeClaims: PersistentVolumeClaim[];
+  podDisruptionBudgets: PodDisruptionBudget[];
   helmReleases: HelmRelease[];
   tick: number;
 }

@@ -115,12 +115,12 @@ export const lessonPods: Lesson = {
       question:
         'A pod is in CrashLoopBackOff. A teammate says "the pod isn\'t running." Is that accurate?',
       choices: [
-        'Yes — CrashLoopBackOff means the pod is in Failed phase and has stopped completely',
-        'No — the pod phase is still Running; CrashLoopBackOff means the container inside keeps crashing and restarting with increasing backoff delays',
-        'No — CrashLoopBackOff is not a real Kubernetes status',
-        'Yes — the pod alternates between Pending and Failed but is never Running',
+        'Yes — CrashLoopBackOff means the pod is in Failed phase and has completely stopped running',
+        'Yes — the pod alternates between Pending and Failed phases but never reaches Running',
+        'No — the pod phase is still Running; CrashLoopBackOff is a container-level status indicating repeated crashes with backoff delays',
+        'No — the pod phase is Succeeded, and the kubelet is restarting it as a precautionary measure',
       ],
-      correctIndex: 1,
+      correctIndex: 2,
       explanation:
         'This is a common source of confusion. The pod\'s phase remains "Running" because Kubernetes keeps trying to restart the container. ' +
         'CrashLoopBackOff is a container-level status, not a pod phase. The kubelet restarts the container with exponentially increasing delays ' +
@@ -130,10 +130,10 @@ export const lessonPods: Lesson = {
       question:
         'You delete a Deployment. What happens to its ReplicaSet and pods?',
       choices: [
-        'The ReplicaSet and pods continue running as standalone resources',
-        'The pods are deleted but the ReplicaSet remains as an orphan',
-        'Only the Deployment object is removed; you must manually delete the ReplicaSet and pods',
-        'Cascade deletion removes the ReplicaSet, which in turn removes all its pods — the entire ownership chain is cleaned up',
+        'The ReplicaSet and pods continue running independently as unmanaged standalone resources',
+        'The pods are deleted but the ReplicaSet remains as an orphaned resource in the namespace',
+        'Only the Deployment object is removed; you must manually delete the ReplicaSet and pods separately',
+        'Cascade deletion removes the ReplicaSet, which in turn removes all its pods via the ownership chain',
       ],
       correctIndex: 3,
       explanation:
@@ -145,10 +145,10 @@ export const lessonPods: Lesson = {
       question:
         'You have a standalone pod named "debug-pod" and a Deployment with 2 replicas. You run "kubectl delete pod debug-pod" and then "kubectl delete pod" on one of the Deployment\'s pods. What is the final state?',
       choices: [
-        'debug-pod is gone permanently; the managed pod is replaced — you end up with 0 standalone pods and 2 managed pods',
-        'Both pods are gone permanently — you end up with 0 standalone pods and 1 managed pod',
-        'Both pods are restarted — you end up with 1 standalone pod and 2 managed pods',
-        'Neither pod can be deleted because Kubernetes protects all running pods',
+        'debug-pod is gone permanently; the managed pod is replaced — you end up with 0 standalone and 2 managed pods',
+        'Both pods are gone permanently — you end up with 0 standalone pods and only 1 managed pod',
+        'Both pods are restarted in place — you end up with 1 standalone pod and 2 managed pods unchanged',
+        'The managed pod is gone permanently too — the ReplicaSet only recreates pods on a timed interval',
       ],
       correctIndex: 0,
       explanation:
@@ -160,17 +160,17 @@ export const lessonPods: Lesson = {
       question:
         'A pod has ownerReference pointing to ReplicaSet "web-rs". Someone deletes "web-rs" directly (not through its parent Deployment). What happens to the pod?',
       choices: [
-        'The pod is immediately terminated because its owner is gone',
-        'The pod keeps running but becomes a standalone pod — with no controller watching it, it will not be replaced if it fails later',
-        'The pod automatically attaches to another ReplicaSet in the same namespace',
-        'Kubernetes prevents you from deleting a ReplicaSet that still has running pods',
+        'The pod is immediately terminated via garbage collection because its owner no longer exists',
+        'The pod keeps running but becomes standalone — with no controller watching, it will not be replaced if it fails',
+        'The Deployment detects the missing RS and immediately reassigns the pod to a newly created replacement RS',
+        'The pod\'s ownerReference is automatically cleared, converting it into an independent standalone pod',
       ],
-      correctIndex: 1,
+      correctIndex: 0,
       explanation:
-        'Garbage collection deletes the pod because of the ownerReference — but only if the default cascade policy applies to the RS deletion. ' +
-        'However, if you delete the RS with --cascade=orphan (or if the Deployment recreates a new RS that adopts the pod via matching labels), ' +
-        'the behavior changes. The key insight is that owner references are what connect pods to their controllers. Without that link, ' +
-        'a pod is effectively standalone and loses all self-healing guarantees.',
+        'By default, deleting a ReplicaSet triggers cascade deletion — the garbage collector finds all pods with an ownerReference pointing to the deleted RS and removes them. ' +
+        'This is the same ownership chain that works when deleting a Deployment. If you wanted to keep the pods running, you would need to use --cascade=orphan, ' +
+        'which deletes only the RS and leaves the pods as unmanaged standalone resources. ' +
+        'The key insight: ownerReferences are what connect pods to controllers, and garbage collection follows those references on deletion.',
     },
   ],
   initialState: () => {
