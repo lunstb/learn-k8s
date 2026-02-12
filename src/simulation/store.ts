@@ -887,14 +887,11 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     const totalExercises = currentLesson.practices?.length ?? 1;
     const isLastExercise = currentExerciseIndex >= totalExercises - 1;
 
-    // Update individual goal progress (latched + sequential)
+    // Update individual goal progress (latched, any order)
     if (goals && goals.length > 0) {
       const newCompleted = [...completedGoalIndices];
       for (let i = 0; i < goals.length; i++) {
         if (newCompleted.includes(i)) continue; // already latched
-        // Sequential: all prior goals must be latched first
-        const allPriorDone = Array.from({ length: i }, (_, j) => j).every(j => newCompleted.includes(j));
-        if (!allPriorDone) break; // can't skip ahead
         if (goals[i].check(cluster)) {
           newCompleted.push(i);
         }

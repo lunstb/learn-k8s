@@ -170,13 +170,15 @@ function parseBlock(lines: string[], startLine: number, baseIndent: number): Par
       }
 
       const nextIndent = getIndent(lines[nextI]);
-      if (nextIndent <= baseIndent) {
+      const nextLine = lines[nextI].trim();
+
+      // Allow list items at the same indent level as the key (valid YAML)
+      if (nextIndent < baseIndent || (nextIndent === baseIndent && !nextLine.startsWith('- '))) {
         result[key] = null;
         i = nextI;
         continue;
       }
 
-      const nextLine = lines[nextI].trim();
       if (nextLine.startsWith('- ')) {
         // Parse list
         const listResult = parseList(lines, nextI, nextIndent);
@@ -298,8 +300,9 @@ function parseList(lines: string[], startLine: number, baseIndent: number): Pars
           while (nextI < lines.length && isBlankOrComment(lines[nextI])) nextI++;
           if (nextI < lines.length) {
             const nextIndent = getIndent(lines[nextI]);
-            if (nextIndent > continuationIndent) {
-              const nextTrimmed = lines[nextI].trim();
+            const nextTrimmed = lines[nextI].trim();
+            // Allow list items at the same indent level as the key (valid YAML)
+            if (nextIndent > continuationIndent || (nextIndent === continuationIndent && nextTrimmed.startsWith('- '))) {
               if (nextTrimmed.startsWith('- ')) {
                 const listResult = parseList(lines, nextI, nextIndent);
                 mapObj[cKey] = listResult.value;

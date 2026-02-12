@@ -273,7 +273,8 @@ spec:
           description: 'Create a Service named "web-svc" targeting app=web-app on the correct port',
           check: (s: ClusterState) => {
             const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
-            return !!svc && svc.spec.selector['app'] === 'web-app' && svc.spec.port === 8080;
+            if (!svc || svc.spec.selector['app'] !== 'web-app') return false;
+            return svc.spec.port === 8080 || svc.spec.targetPort === 8080;
           },
         },
         {

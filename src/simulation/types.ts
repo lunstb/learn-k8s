@@ -156,7 +156,7 @@ export interface SimNode {
 export interface Service {
   kind: 'Service';
   metadata: ObjectMeta;
-  spec: { selector: Record<string, string>; port: number; type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer' };
+  spec: { selector: Record<string, string>; port: number; targetPort?: number; type?: 'ClusterIP' | 'NodePort' | 'LoadBalancer' };
   status: { endpoints: string[] };
 }
 
