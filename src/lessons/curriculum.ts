@@ -31,6 +31,10 @@ import { lessonStartupShutdown } from './lesson-startup-shutdown';
 import { lessonArchitecture } from './lesson-architecture';
 import { lessonCRDsOperators } from './lesson-crds-operators';
 import { lessonCapstoneMultiservice } from './lesson-capstone-multiservice';
+import { lessonRomeNetworking } from './lesson-rome-networking';
+import { lessonRomeWorkloads } from './lesson-rome-workloads';
+import { lessonRomeSecurity } from './lesson-rome-security';
+import { lessonRomeIaC } from './lesson-rome-iac';
 
 export const curriculum: CurriculumSection[] = [
   {
@@ -74,6 +78,12 @@ export const curriculum: CurriculumSection[] = [
     title: 'Advanced Troubleshooting',
     description: 'Put it all together. Debug a broken multi-service application using everything you have learned across the entire curriculum.',
     lessons: [lessonCapstoneMultiservice],
+  },
+  {
+    id: 'rome-ai',
+    title: 'Your Deployment: Rome AI',
+    description: 'See how every simulator concept maps to your real production EKS infrastructure — from traffic routing and workload architecture to security, observability, and Infrastructure as Code.',
+    lessons: [lessonRomeNetworking, lessonRomeWorkloads, lessonRomeSecurity, lessonRomeIaC],
   },
 ];
 
