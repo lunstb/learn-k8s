@@ -773,6 +773,77 @@
   border-color: #1e293b;
 }
 
+/* === Exercise Progress === */
+
+.exercise-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: #1e293b;
+  border-radius: 6px;
+  border: 1px solid #334155;
+}
+
+.exercise-progress-label {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.exercise-dots {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.exercise-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #334155;
+  border: 1px solid #475569;
+  transition: all 0.2s;
+}
+
+.exercise-dot.completed {
+  background: #22c55e;
+  border-color: #22c55e;
+}
+
+.exercise-dot.active {
+  background: #3b82f6;
+  border-color: #60a5fa;
+  box-shadow: 0 0 4px rgba(59, 130, 246, 0.5);
+}
+
+.exercise-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 6px;
+}
+
+.btn-next-exercise {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  margin-top: 8px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-next-exercise:hover {
+  background: #3b82f6;
+}
+
 .phase-connector {
   width: 16px;
   height: 2px;

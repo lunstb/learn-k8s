@@ -38,6 +38,21 @@ export interface LessonHint {
   exact?: boolean;
 }
 
+export interface PracticeExercise {
+  title: string;
+  goalDescription: string;
+  successMessage: string;
+  initialState: () => Partial<Omit<ClusterState, 'tick'>> &
+    Pick<ClusterState, 'pods' | 'replicaSets' | 'deployments' | 'nodes' | 'services' | 'events'>;
+  goals?: LessonGoal[];
+  goalCheck?: (state: ClusterState) => boolean;
+  hints?: LessonHint[];
+  yamlTemplate?: string;
+  podFailureRules?: Record<string, 'ImagePullError' | 'CrashLoopBackOff' | 'OOMKilled'>;
+  afterTick?: (tick: number, state: ClusterState) => ClusterState;
+  steps?: LessonStep[];
+}
+
 export interface Lesson {
   id: number;
   title: string;
@@ -53,6 +68,7 @@ export interface Lesson {
   podFailureRules?: Record<string, 'ImagePullError' | 'CrashLoopBackOff' | 'OOMKilled'>;
   afterTick?: (tick: number, state: ClusterState) => ClusterState;
   steps?: LessonStep[];
+  practices?: PracticeExercise[];
   lecture: {
     sections: LectureSection[];
   };

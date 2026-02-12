@@ -13,54 +13,6 @@ export const lessonProbes: Lesson = {
   successMessage:
     'All pods passed their readiness probes and the service is routing traffic to all healthy endpoints. ' +
     'Without readiness probes, Running pods may be added to Service endpoints before they are truly ready to serve.',
-  yamlTemplate: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: web
-  template:
-    metadata:
-      labels:
-        app: web
-    spec:
-      containers:
-      - name: web
-        image: nginx:1.21
-        readinessProbe:
-          httpGet:
-            path: ???
-            port: ???
-          initialDelaySeconds: ???
-          periodSeconds: ???`,
-  hints: [
-    { text: 'First delete the existing deployment: kubectl delete deployment web. Then switch to the YAML Editor tab.' },
-    { text: 'In the YAML Editor, fill in the readinessProbe: path should be "/", port 80, initialDelaySeconds 1, periodSeconds 5.' },
-    { text: 'kubectl delete deployment web', exact: true },
-    { text: 'Click Apply in the YAML Editor (or Ctrl+Enter) to create the new deployment with probes.' },
-  ],
-  goals: [
-    {
-      description: 'Deploy "web" pods with readiness probes configured',
-      check: (s: ClusterState) => s.pods.some(p => p.metadata.labels['app'] === 'web' && p.spec.readinessProbe && !p.metadata.deletionTimestamp),
-    },
-    {
-      description: 'At least 3 web pods Running and ready',
-      check: (s: ClusterState) => {
-        return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && p.status.ready === true && !p.metadata.deletionTimestamp).length >= 3;
-      },
-    },
-    {
-      description: 'Service "web-svc" has at least 3 endpoints',
-      check: (s: ClusterState) => {
-        const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
-        return !!svc && svc.status.endpoints.length >= 3;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -239,170 +191,236 @@ spec:
         'This is how Kubernetes achieves zero-downtime deployments — new pods only receive traffic after their readiness probes pass.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
-
-    // Pods are Running but NOT ready — no readiness probe configured
-    const pods = Array.from({ length: 3 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image },
-      status: { phase: 'Running' as const, ready: false },
-    }));
-
-    return {
-      deployments: [
+  practices: [
+    {
+      title: 'Add Readiness Probes to Fix Endpoints',
+      goalDescription:
+        'The "web" pods are Running but the "web-svc" Service has 0 endpoints because pods lack readiness probes. Delete the deployment, then recreate it with a readinessProbe using kubectl apply with a YAML manifest. The service needs at least 3 ready endpoints.',
+      successMessage:
+        'All pods passed their readiness probes and the service is routing traffic to all healthy endpoints. ' +
+        'Without readiness probes, Running pods may be added to Service endpoints before they are truly ready to serve.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: nginx:1.21
+        readinessProbe:
+          httpGet:
+            path: ???
+            port: ???
+          initialDelaySeconds: ???
+          periodSeconds: ???`,
+      hints: [
+        { text: 'First delete the existing deployment: kubectl delete deployment web. Then switch to the YAML Editor tab.' },
+        { text: 'In the YAML Editor, fill in the readinessProbe: path should be "/", port 80, initialDelaySeconds 1, periodSeconds 5.' },
+        { text: 'kubectl delete deployment web', exact: true },
+        { text: 'Click Apply in the YAML Editor (or Ctrl+Enter) to create the new deployment with probes.' },
+      ],
+      goals: [
         {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'web',
-            uid: depUid,
-            labels: { app: 'web' },
-            creationTimestamp: Date.now() - 120000,
+          description: 'Use "kubectl delete deployment" to remove the old deployment',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('delete-deployment'),
+        },
+        {
+          description: 'Use "kubectl apply" to create the new deployment with probes',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'Deploy "web" pods with readiness probes configured',
+          check: (s: ClusterState) => s.pods.some(p => p.metadata.labels['app'] === 'web' && p.spec.readinessProbe && !p.metadata.deletionTimestamp),
+        },
+        {
+          description: 'At least 3 web pods Running and ready',
+          check: (s: ClusterState) => {
+            return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && p.status.ready === true && !p.metadata.deletionTimestamp).length >= 3;
           },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web' },
-            template: {
-              labels: { app: 'web' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 3,
-            updatedReplicas: 3,
-            readyReplicas: 0,
-            availableReplicas: 0,
-            conditions: [],
+        },
+        {
+          description: 'Service "web-svc" has at least 3 endpoints',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
+            return !!svc && svc.status.endpoints.length >= 3;
           },
         },
       ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        // Pods are Running but NOT ready — no readiness probe configured
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `web-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'web', 'pod-template-hash': hash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'web',
-              uid: depUid,
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'web', 'pod-template-hash': hash },
-              spec: { image },
+          spec: { image },
+          status: { phase: 'Running' as const, ready: false },
+        }));
+
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web',
+                uid: depUid,
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'web' },
+                template: {
+                  labels: { app: 'web' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 3,
+                updatedReplicas: 3,
+                readyReplicas: 0,
+                availableReplicas: 0,
+                conditions: [],
+              },
             },
-          },
-          status: { replicas: 3, readyReplicas: 0 },
-        },
-      ],
-      pods,
-      nodes: [
-        {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-1',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-1' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 5 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 2,
-          },
-        },
-        {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-2',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-2' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 5 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 1,
-          },
-        },
-      ],
-      services: [
-        {
-          kind: 'Service' as const,
-          metadata: {
-            name: 'web-svc',
-            uid: generateUID(),
-            labels: {},
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: { selector: { app: 'web' }, port: 80 },
-          status: { endpoints: [] as string[] },
-        },
-      ],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  afterTick: (_tick, state) => {
-    // If web pods have a readinessProbe configured and are Running, mark them ready
-    const webPods = state.pods.filter(
-      (p) =>
-        p.metadata.labels['app'] === 'web' &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
-    for (const pod of webPods) {
-      if (pod.spec.readinessProbe && !pod.status.ready) {
-        pod.status.ready = true;
-      }
-    }
-    return state;
-  },
-  goalCheck: (state) => {
-    // All pods must be Running and ready with readiness probes
-    const webPods = state.pods.filter(
-      (p) =>
-        p.metadata.labels['app'] === 'web' &&
-        p.status.phase === 'Running' &&
-        p.status.ready === true &&
-        !p.metadata.deletionTimestamp
-    );
-    if (webPods.length < 3) return false;
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'web', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 3, readyReplicas: 0 },
+            },
+          ],
+          pods,
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-1',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-1' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 2,
+              },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-2',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-2' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+          ],
+          services: [
+            {
+              kind: 'Service' as const,
+              metadata: {
+                name: 'web-svc',
+                uid: generateUID(),
+                labels: {},
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: { selector: { app: 'web' }, port: 80 },
+              status: { endpoints: [] as string[] },
+            },
+          ],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      afterTick: (_tick: number, state: ClusterState) => {
+        // If web pods have a readinessProbe configured and are Running, mark them ready
+        const webPods = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'web' &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
+        for (const pod of webPods) {
+          if (pod.spec.readinessProbe && !pod.status.ready) {
+            pod.status.ready = true;
+          }
+        }
+        return state;
+      },
+      goalCheck: (state: ClusterState) => {
+        // All pods must be Running and ready with readiness probes
+        const webPods = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'web' &&
+            p.status.phase === 'Running' &&
+            p.status.ready === true &&
+            !p.metadata.deletionTimestamp
+        );
+        if (webPods.length < 3) return false;
 
-    // Service must have at least 3 endpoints
-    const svc = state.services.find((s) => s.metadata.name === 'web-svc');
-    if (!svc) return false;
+        // Service must have at least 3 endpoints
+        const svc = state.services.find((s) => s.metadata.name === 'web-svc');
+        if (!svc) return false;
 
-    return svc.status.endpoints.length >= 3;
-  },
+        return svc.status.endpoints.length >= 3;
+      },
+    },
+  ],
 };

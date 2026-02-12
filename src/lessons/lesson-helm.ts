@@ -1,6 +1,6 @@
 import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
-import { generateUID } from '../simulation/utils';
+import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lessonHelm: Lesson = {
   id: 19,
@@ -13,26 +13,6 @@ export const lessonHelm: Lesson = {
   successMessage:
     'Helm release deployed successfully. Helm simplifies complex deployments by packaging multiple Kubernetes resources ' +
     'into a single chart that can be installed, upgraded, and rolled back as a unit.',
-  hints: [
-    { text: 'Helm installs pre-packaged applications (charts) into your cluster.' },
-    { text: 'helm install my-app nginx-chart', exact: true },
-    { text: 'Reconcile until the deployment\'s pods reach Running status. Check with helm list.' },
-  ],
-  goals: [
-    {
-      description: 'Install Helm release "my-app" from nginx-chart',
-      check: (s: ClusterState) => s.helmReleases.some(r => r.name === 'my-app' && r.status === 'deployed'),
-    },
-    {
-      description: 'Deployment created by the release has Running pods',
-      check: (s: ClusterState) => {
-        const release = s.helmReleases.find(r => r.name === 'my-app');
-        if (!release) return false;
-        const dep = s.deployments.find(d => d.metadata.name === release.deploymentName);
-        return !!dep && (dep.status.readyReplicas || 0) > 0;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -196,51 +176,230 @@ export const lessonHelm: Lesson = {
         '--set is fine for quick experiments but dangerous for repeatable deployments.',
     },
   ],
-  initialState: () => {
-    const nodeNames = ['node-1', 'node-2'];
-    const nodes = nodeNames.map((name) => ({
-      kind: 'Node' as const,
-      metadata: {
-        name,
-        uid: generateUID(),
-        labels: { 'kubernetes.io/hostname': name },
-        creationTimestamp: Date.now() - 300000,
+  practices: [
+    {
+      title: 'Install a Helm Release',
+      goalDescription:
+        'Install a Helm release named "my-app" using the "nginx-chart" chart. Verify the created deployment has healthy Running pods.',
+      successMessage:
+        'Helm release deployed successfully. Helm simplifies complex deployments by packaging multiple Kubernetes resources ' +
+        'into a single chart that can be installed, upgraded, and rolled back as a unit.',
+      hints: [
+        { text: 'Helm installs pre-packaged applications (charts) into your cluster.' },
+        { text: 'helm install my-app nginx-chart', exact: true },
+        { text: 'Reconcile until the deployment\'s pods reach Running status. Check with helm list.' },
+      ],
+      goals: [
+        {
+          description: 'Install a Helm release',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('helm-install'),
+        },
+        {
+          description: 'Install Helm release "my-app" from nginx-chart',
+          check: (s: ClusterState) => s.helmReleases.some(r => r.name === 'my-app' && r.status === 'deployed'),
+        },
+        {
+          description: 'Deployment created by the release has Running pods',
+          check: (s: ClusterState) => {
+            const release = s.helmReleases.find(r => r.name === 'my-app');
+            if (!release) return false;
+            const dep = s.deployments.find(d => d.metadata.name === release.deploymentName);
+            return !!dep && (dep.status.readyReplicas || 0) > 0;
+          },
+        },
+      ],
+      initialState: () => {
+        const nodeNames = ['node-1', 'node-2'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: { capacity: { pods: 5 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 0,
+          },
+        }));
+
+        return {
+          pods: [],
+          replicaSets: [],
+          deployments: [],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
       },
-      spec: { capacity: { pods: 5 } },
-      status: {
-        conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-        allocatedPods: 0,
+      goalCheck: (state) => {
+        if (state.helmReleases.length < 1) return false;
+
+        const release = state.helmReleases.find((r) => r.name === 'my-app');
+        if (!release || release.status !== 'deployed') return false;
+
+        const dep = state.deployments.find((d) => d.metadata.name === release.deploymentName);
+        if (!dep) return false;
+
+        return dep.status.readyReplicas > 0;
       },
-    }));
+    },
+    {
+      title: 'Clean Up a Helm Release',
+      goalDescription:
+        'A Helm release "legacy-app" is deployed but no longer needed. List Helm releases to verify, then uninstall it and confirm the deployment is removed.',
+      successMessage:
+        'Helm uninstall removes all resources created by the release. In production, use --keep-history if you might need to rollback later.',
+      hints: [
+        { text: 'Run "helm list" to see installed releases.' },
+        { text: 'helm uninstall legacy-app', exact: true },
+        { text: 'After uninstalling, verify with "kubectl get deployments" that legacy-app is gone.' },
+      ],
+      goals: [
+        {
+          description: 'List Helm releases with "helm list"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('helm-list'),
+        },
+        {
+          description: 'Uninstall the "legacy-app" release',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('helm-uninstall'),
+        },
+        {
+          description: 'Deployment "legacy-app" is removed',
+          check: (s: ClusterState) => !s.deployments.some(d => d.metadata.name === 'legacy-app'),
+        },
+      ],
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
 
-    return {
-      pods: [],
-      replicaSets: [],
-      deployments: [],
-      nodes,
-      services: [],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    if (state.helmReleases.length < 1) return false;
+        const nodeNames = ['node-1', 'node-2'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: { capacity: { pods: 5 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 1,
+          },
+        }));
 
-    const release = state.helmReleases.find((r) => r.name === 'my-app');
-    if (!release || release.status !== 'deployed') return false;
+        const pods = Array.from({ length: 2 }, (_, i) => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`legacy-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'legacy-app', 'pod-template-hash': hash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `legacy-app-${hash.slice(0, 10)}`,
+              uid: rsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image, nodeName: nodeNames[i] },
+          status: { phase: 'Running' as const },
+        }));
 
-    const dep = state.deployments.find((d) => d.metadata.name === release.deploymentName);
-    if (!dep) return false;
-
-    return dep.status.readyReplicas > 0;
-  },
+        return {
+          pods,
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `legacy-app-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'legacy-app', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'legacy-app',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'legacy-app', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'legacy-app', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
+            },
+          ],
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'legacy-app',
+                uid: depUid,
+                labels: { app: 'legacy-app' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'legacy-app' },
+                template: {
+                  labels: { app: 'legacy-app' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
+            },
+          ],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [
+            { name: 'legacy-app', chart: 'nginx-chart', status: 'deployed', deploymentName: 'legacy-app' },
+          ],
+        };
+      },
+      goalCheck: (state) => {
+        const hasDeployedRelease = state.helmReleases.some(
+          (r) => r.name === 'legacy-app' && r.status === 'deployed'
+        );
+        const hasDeployment = state.deployments.some(
+          (d) => d.metadata.name === 'legacy-app'
+        );
+        return !hasDeployedRelease && !hasDeployment;
+      },
+    },
+  ],
 };

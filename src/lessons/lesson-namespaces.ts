@@ -12,25 +12,6 @@ export const lessonNamespaces: Lesson = {
     'Create a namespace called "dev" and deploy a "web" Deployment with image nginx and 2 Running replicas in the default namespace.',
   successMessage:
     'You now have multiple namespaces and a healthy deployment. Namespaces let teams share a cluster without stepping on each other.',
-  hints: [
-    { text: 'Use kubectl create namespace to create a new namespace.' },
-    { text: 'kubectl create namespace dev', exact: true },
-    { text: 'Now create a deployment in the default namespace.' },
-    { text: 'kubectl create deployment web --image=nginx --replicas=2', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Create a namespace called "dev"',
-      check: (s: ClusterState) => s.namespaces.some(ns => ns.metadata.name === 'dev'),
-    },
-    {
-      description: 'Create a "web" Deployment with 2 Running replicas',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'web');
-        return !!dep && (dep.status.readyReplicas || 0) >= 2;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -212,75 +193,111 @@ export const lessonNamespaces: Lesson = {
         'Namespaces provide name scoping but NOT access control by themselves. Without RBAC, any authenticated user could read resources in any namespace. RBAC (Role-Based Access Control) is the mechanism that restricts access: a Role defines permissions within a namespace, and a RoleBinding grants those permissions to a user or ServiceAccount. If the team has a Role allowing Secret reads only in "payments", they cannot read Secrets in "orders". This is why namespaces and RBAC work together — namespaces provide the boundary, RBAC enforces it.',
     },
   ],
-  initialState: () => {
-    return {
-      deployments: [],
-      replicaSets: [],
-      pods: [],
-      nodes: [
+  practices: [
+    {
+      title: 'Create a Namespace and Deploy',
+      goalDescription:
+        'Create a namespace called "dev" and deploy a "web" Deployment with image nginx and 2 Running replicas in the default namespace.',
+      successMessage:
+        'You now have multiple namespaces and a healthy deployment. Namespaces let teams share a cluster without stepping on each other.',
+      hints: [
+        { text: 'Use kubectl create namespace to create a new namespace.' },
+        { text: 'kubectl create namespace dev', exact: true },
+        { text: 'Now create a deployment in the default namespace.' },
+        { text: 'kubectl create deployment web --image=nginx --replicas=2', exact: true },
+      ],
+      goals: [
         {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-1',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-1' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 5 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 0,
-          },
+          description: 'Create the "dev" namespace',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-namespace'),
         },
         {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-2',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-2' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 5 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 0,
+          description: 'Create the "web" deployment',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-deployment'),
+        },
+        {
+          description: 'Namespace "dev" exists',
+          check: (s: ClusterState) => s.namespaces.some(ns => ns.metadata.name === 'dev'),
+        },
+        {
+          description: '"web" Deployment has 2 Running replicas',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web');
+            return !!dep && (dep.status.readyReplicas || 0) >= 2;
           },
         },
       ],
-      services: [],
-      events: [],
-      namespaces: [
-        {
-          kind: 'Namespace' as const,
-          metadata: {
-            name: 'default',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/metadata.name': 'default' },
-            creationTimestamp: Date.now() - 600000,
-          },
-          status: { phase: 'Active' as const },
-        },
-      ],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    // Need at least 2 namespaces (default + dev)
-    if (state.namespaces.length < 2) return false;
+      initialState: () => {
+        return {
+          deployments: [],
+          replicaSets: [],
+          pods: [],
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-1',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-1' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 0,
+              },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-2',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-2' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 0,
+              },
+            },
+          ],
+          services: [],
+          events: [],
+          namespaces: [
+            {
+              kind: 'Namespace' as const,
+              metadata: {
+                name: 'default',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/metadata.name': 'default' },
+                creationTimestamp: Date.now() - 600000,
+              },
+              status: { phase: 'Active' as const },
+            },
+          ],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state) => {
+        // Need at least 2 namespaces (default + dev)
+        if (state.namespaces.length < 2) return false;
 
-    // Need a deployment with readyReplicas >= 2
-    const dep = state.deployments.find((d) => d.metadata.name === 'web');
-    if (!dep) return false;
-    if ((dep.status.readyReplicas || 0) < 2) return false;
+        // Need a deployment with readyReplicas >= 2
+        const dep = state.deployments.find((d) => d.metadata.name === 'web');
+        if (!dep) return false;
+        if ((dep.status.readyReplicas || 0) < 2) return false;
 
-    return true;
-  },
+        return true;
+      },
+    },
+  ],
 };

@@ -13,44 +13,6 @@ export const lessonHPA: Lesson = {
   successMessage:
     'You created the HPA and it detected high CPU utilization, scaling the deployment up automatically. ' +
     'HPA is the key to matching capacity to demand — no manual intervention needed after setup.',
-  yamlTemplate: `apiVersion: autoscaling/v1
-kind: HorizontalPodAutoscaler
-metadata:
-  name: web
-spec:
-  scaleTargetRef:
-    kind: Deployment
-    name: ???
-  minReplicas: ???
-  maxReplicas: ???
-  targetCPUUtilizationPercentage: ???`,
-  hints: [
-    { text: 'The YAML Editor has an HPA template with placeholder values. Fill in the target deployment name and the scaling parameters from the goal.' },
-    { text: 'Set scaleTargetRef name to the deployment name, and configure min/max replicas and the CPU target percentage to match the goal requirements.' },
-    { text: 'kubectl autoscale deployment web --min=2 --max=8 --cpu-percent=50', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Create an HPA for the "web" Deployment (min=2, max=8, cpu=50%)',
-      check: (s: ClusterState) => {
-        const h = s.hpas.find(h => h.spec.scaleTargetRef.name === 'web');
-        return !!h && h.spec.minReplicas === 2 && h.spec.maxReplicas === 8 && h.spec.targetCPUUtilizationPercentage === 50;
-      },
-    },
-    {
-      description: 'HPA scales the deployment beyond 2 replicas',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'web');
-        return !!dep && dep.spec.replicas > 2;
-      },
-    },
-    {
-      description: 'More than 2 "web" pods Running',
-      check: (s: ClusterState) => {
-        return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length > 2;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -201,156 +163,208 @@ spec:
         'to respond to spikes immediately.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'web-app:1.0';
-    const hash = templateHash({ image });
-
-    const nodeNames = ['node-1', 'node-2', 'node-3'];
-    const nodes = nodeNames.map((name) => ({
-      kind: 'Node' as const,
-      metadata: {
-        name,
-        uid: generateUID(),
-        labels: { 'kubernetes.io/hostname': name },
-        creationTimestamp: Date.now() - 300000,
-      },
-      spec: { capacity: { pods: 5 } },
-      status: {
-        conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-        allocatedPods: 1,
-      },
-    }));
-
-    const pods = Array.from({ length: 2 }, (_, i) => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image, nodeName: nodeNames[i] },
-      status: { phase: 'Running' as const, cpuUsage: 85 },
-    }));
-
-    return {
-      pods,
-      replicaSets: [
+  practices: [
+    {
+      title: 'Configure Autoscaling',
+      goalDescription:
+        'The "web" pods have high CPU usage (~85%) but no autoscaler. Create an HPA targeting the "web" Deployment with min=2, max=8, target CPU=50%. Reconcile until the HPA scales beyond 2 replicas.',
+      successMessage:
+        'You created the HPA and it detected high CPU utilization, scaling the deployment up automatically. ' +
+        'HPA is the key to matching capacity to demand — no manual intervention needed after setup.',
+      yamlTemplate: `apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: ???
+  minReplicas: ???
+  maxReplicas: ???
+  targetCPUUtilizationPercentage: ???`,
+      hints: [
+        { text: 'The YAML Editor has an HPA template with placeholder values. Fill in the target deployment name and the scaling parameters from the goal.' },
+        { text: 'Set scaleTargetRef name to the deployment name, and configure min/max replicas and the CPU target percentage to match the goal requirements.' },
+        { text: 'kubectl autoscale deployment web --min=2 --max=8 --cpu-percent=50', exact: true },
+      ],
+      goals: [
         {
-          kind: 'ReplicaSet' as const,
+          description: 'Create an HPA with "kubectl autoscale"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('autoscale'),
+        },
+        {
+          description: 'Create an HPA for the "web" Deployment (min=2, max=8, cpu=50%)',
+          check: (s: ClusterState) => {
+            const h = s.hpas.find(h => h.spec.scaleTargetRef.name === 'web');
+            return !!h && h.spec.minReplicas === 2 && h.spec.maxReplicas === 8 && h.spec.targetCPUUtilizationPercentage === 50;
+          },
+        },
+        {
+          description: 'HPA scales the deployment beyond 2 replicas',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web');
+            return !!dep && dep.spec.replicas > 2;
+          },
+        },
+        {
+          description: 'More than 2 "web" pods Running',
+          check: (s: ClusterState) => {
+            return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length > 2;
+          },
+        },
+      ],
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'web-app:1.0';
+        const hash = templateHash({ image });
+
+        const nodeNames = ['node-1', 'node-2', 'node-3'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
           metadata: {
-            name: `web-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: { capacity: { pods: 5 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 1,
+          },
+        }));
+
+        const pods = Array.from({ length: 2 }, (_, i) => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'web', 'pod-template-hash': hash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'web',
-              uid: depUid,
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 2,
-            selector: { app: 'web', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'web', 'pod-template-hash': hash },
-              spec: { image },
+          spec: { image, nodeName: nodeNames[i] },
+          status: { phase: 'Running' as const, cpuUsage: 85 },
+        }));
+
+        return {
+          pods,
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
             },
-          },
-          status: { replicas: 2, readyReplicas: 2 },
-        },
-      ],
-      deployments: [
-        {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'web',
-            uid: depUid,
-            labels: { app: 'web' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 2,
-            selector: { app: 'web' },
-            template: {
-              labels: { app: 'web' },
-              spec: { image },
+          ],
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web',
+                uid: depUid,
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web' },
+                template: {
+                  labels: { app: 'web' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
             },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 2,
-            updatedReplicas: 2,
-            readyReplicas: 2,
-            availableReplicas: 2,
-            conditions: [{ type: 'Available', status: 'True' }],
-          },
-        },
-      ],
-      nodes,
-      services: [],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  afterTick: (tick, state) => {
-    const webPods = state.pods.filter(
-      (p) =>
-        p.metadata.labels['app'] === 'web' &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
+          ],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      afterTick: (tick, state) => {
+        const webPods = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'web' &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
 
-    if (tick <= 3) {
-      // High CPU for first 3 ticks to trigger scale-up
-      for (const pod of webPods) {
-        pod.status.cpuUsage = 85;
-      }
-    } else if (tick > 5) {
-      // CPU drops after tick 5
-      for (const pod of webPods) {
-        pod.status.cpuUsage = 30;
-      }
-    }
+        if (tick <= 3) {
+          // High CPU for first 3 ticks to trigger scale-up
+          for (const pod of webPods) {
+            pod.status.cpuUsage = 85;
+          }
+        } else if (tick > 5) {
+          // CPU drops after tick 5
+          for (const pod of webPods) {
+            pod.status.cpuUsage = 30;
+          }
+        }
 
-    return state;
-  },
-  goalCheck: (state) => {
-    // HPA must exist targeting "web"
-    const hpa = state.hpas.find(
-      (h) => h.spec.scaleTargetRef.name === 'web'
-    );
-    if (!hpa) return false;
+        return state;
+      },
+      goalCheck: (state) => {
+        // HPA must exist targeting "web"
+        const hpa = state.hpas.find(
+          (h) => h.spec.scaleTargetRef.name === 'web'
+        );
+        if (!hpa) return false;
 
-    const dep = state.deployments.find((d) => d.metadata.name === 'web');
-    if (!dep) return false;
+        const dep = state.deployments.find((d) => d.metadata.name === 'web');
+        if (!dep) return false;
 
-    // HPA should have scaled the deployment beyond 2 replicas
-    if (dep.spec.replicas <= 2) return false;
+        // HPA should have scaled the deployment beyond 2 replicas
+        if (dep.spec.replicas <= 2) return false;
 
-    const runningWebPods = state.pods.filter(
-      (p) =>
-        p.metadata.labels['app'] === 'web' &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
+        const runningWebPods = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'web' &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
 
-    return runningWebPods.length > 2;
-  },
+        return runningWebPods.length > 2;
+      },
+    },
+  ],
 };

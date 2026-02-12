@@ -12,46 +12,6 @@ export const lessonPDB: Lesson = {
     'Deploy a 3-replica app, apply a PDB with maxUnavailable=1, then drain a node. Observe that the PDB limits evictions so your app stays available.',
   successMessage:
     'The PDB protected your application during the node drain. Only the allowed number of pods were evicted at once, ensuring continuous availability.',
-  yamlTemplate: `apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: web-pdb
-spec:
-  maxUnavailable: 1
-  selector:
-    matchLabels:
-      app: web`,
-  hints: [
-    { text: 'Check which nodes your pods are running on to understand the current distribution.' },
-    { text: 'Apply the PDB from the YAML Editor — it limits how many pods can be disrupted.' },
-    { text: 'Use kubectl drain on one of the nodes that has a web pod to trigger a voluntary disruption.' },
-    { text: 'kubectl drain node-2', exact: true },
-  ],
-  goals: [
-    {
-      description: 'PDB "web-pdb" exists',
-      check: (s: ClusterState) => s.podDisruptionBudgets.some((p) => p.metadata.name === 'web-pdb'),
-    },
-    {
-      description: 'Drain a node — observe PDB-limited eviction',
-      check: (s: ClusterState) => {
-        // A node has been drained (unschedulable or NotReady)
-        return s.nodes.some((n) => n.spec.unschedulable === true);
-      },
-    },
-    {
-      description: 'All web pods running (rescheduled after drain)',
-      check: (s: ClusterState) => {
-        const runningWeb = s.pods.filter(
-          (p) =>
-            p.metadata.labels['app'] === 'web' &&
-            p.status.phase === 'Running' &&
-            !p.metadata.deletionTimestamp
-        );
-        return runningWeb.length >= 3;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -210,115 +170,172 @@ spec:
         'it directly deletes the pod, bypassing PDB checks. This is an important distinction for incident response.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.21';
-    const hash = templateHash({ image });
+  practices: [
+    {
+      title: 'Protect Pods During Drain',
+      goalDescription:
+        'Deploy a 3-replica app, apply a PDB with maxUnavailable=1, then drain a node. Observe that the PDB limits evictions so your app stays available.',
+      successMessage:
+        'The PDB protected your application during the node drain. Only the allowed number of pods were evicted at once, ensuring continuous availability.',
+      yamlTemplate: `apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-pdb
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: web`,
+      hints: [
+        { text: 'Check which nodes your pods are running on to understand the current distribution.' },
+        { text: 'Apply the PDB from the YAML Editor — it limits how many pods can be disrupted.' },
+        { text: 'Use kubectl drain on one of the nodes that has a web pod to trigger a voluntary disruption.' },
+        { text: 'kubectl drain node-2', exact: true },
+      ],
+      goals: [
+        {
+          description: 'Apply the PDB YAML',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'Drain a node to test the PDB',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('drain'),
+        },
+        {
+          description: 'PDB "web-pdb" exists',
+          check: (s: ClusterState) => s.podDisruptionBudgets.some((p) => p.metadata.name === 'web-pdb'),
+        },
+        {
+          description: 'Drain a node — observe PDB-limited eviction',
+          check: (s: ClusterState) => {
+            // A node has been drained (unschedulable or NotReady)
+            return s.nodes.some((n) => n.spec.unschedulable === true);
+          },
+        },
+        {
+          description: 'All web pods running (rescheduled after drain)',
+          check: (s: ClusterState) => {
+            const runningWeb = s.pods.filter(
+              (p) =>
+                p.metadata.labels['app'] === 'web' &&
+                p.status.phase === 'Running' &&
+                !p.metadata.deletionTimestamp
+            );
+            return runningWeb.length >= 3;
+          },
+        },
+      ],
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.21';
+        const hash = templateHash({ image });
 
-    const pods = [
-      {
-        kind: 'Pod' as const,
-        metadata: {
-          name: generatePodName(`web-${hash.slice(0, 10)}`),
-          uid: generateUID(),
-          labels: { app: 'web', 'pod-template-hash': hash },
-          ownerReference: { kind: 'ReplicaSet', name: `web-${hash.slice(0, 10)}`, uid: rsUid },
-          creationTimestamp: Date.now() - 60000,
-        },
-        spec: { image, nodeName: 'node-1' },
-        status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
-      },
-      {
-        kind: 'Pod' as const,
-        metadata: {
-          name: generatePodName(`web-${hash.slice(0, 10)}`),
-          uid: generateUID(),
-          labels: { app: 'web', 'pod-template-hash': hash },
-          ownerReference: { kind: 'ReplicaSet', name: `web-${hash.slice(0, 10)}`, uid: rsUid },
-          creationTimestamp: Date.now() - 60000,
-        },
-        spec: { image, nodeName: 'node-2' },
-        status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
-      },
-      {
-        kind: 'Pod' as const,
-        metadata: {
-          name: generatePodName(`web-${hash.slice(0, 10)}`),
-          uid: generateUID(),
-          labels: { app: 'web', 'pod-template-hash': hash },
-          ownerReference: { kind: 'ReplicaSet', name: `web-${hash.slice(0, 10)}`, uid: rsUid },
-          creationTimestamp: Date.now() - 60000,
-        },
-        spec: { image, nodeName: 'node-3' },
-        status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
-      },
-    ];
+        const pods = [
+          {
+            kind: 'Pod' as const,
+            metadata: {
+              name: generatePodName(`web-${hash.slice(0, 10)}`),
+              uid: generateUID(),
+              labels: { app: 'web', 'pod-template-hash': hash },
+              ownerReference: { kind: 'ReplicaSet', name: `web-${hash.slice(0, 10)}`, uid: rsUid },
+              creationTimestamp: Date.now() - 60000,
+            },
+            spec: { image, nodeName: 'node-1' },
+            status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
+          },
+          {
+            kind: 'Pod' as const,
+            metadata: {
+              name: generatePodName(`web-${hash.slice(0, 10)}`),
+              uid: generateUID(),
+              labels: { app: 'web', 'pod-template-hash': hash },
+              ownerReference: { kind: 'ReplicaSet', name: `web-${hash.slice(0, 10)}`, uid: rsUid },
+              creationTimestamp: Date.now() - 60000,
+            },
+            spec: { image, nodeName: 'node-2' },
+            status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
+          },
+          {
+            kind: 'Pod' as const,
+            metadata: {
+              name: generatePodName(`web-${hash.slice(0, 10)}`),
+              uid: generateUID(),
+              labels: { app: 'web', 'pod-template-hash': hash },
+              ownerReference: { kind: 'ReplicaSet', name: `web-${hash.slice(0, 10)}`, uid: rsUid },
+              creationTimestamp: Date.now() - 60000,
+            },
+            spec: { image, nodeName: 'node-3' },
+            status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
+          },
+        ];
 
-    return {
-      pods,
-      deployments: [
-        {
-          kind: 'Deployment' as const,
-          metadata: { name: 'web', uid: depUid, labels: { app: 'web' }, creationTimestamp: Date.now() - 120000 },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web' },
-            template: { labels: { app: 'web', 'pod-template-hash': hash }, spec: { image } },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: { replicas: 3, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, conditions: [] },
-        },
-      ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
-          metadata: {
-            name: `web-${hash.slice(0, 10)}`, uid: rsUid,
-            labels: { app: 'web', 'pod-template-hash': hash },
-            ownerReference: { kind: 'Deployment', name: 'web', uid: depUid },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 3, selector: { app: 'web', 'pod-template-hash': hash },
-            template: { labels: { app: 'web', 'pod-template-hash': hash }, spec: { image } },
-          },
-          status: { replicas: 3, readyReplicas: 3 },
-        },
-      ],
-      nodes: [
-        {
-          kind: 'Node' as const,
-          metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
-        },
-        {
-          kind: 'Node' as const,
-          metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
-        },
-        {
-          kind: 'Node' as const,
-          metadata: { name: 'node-3', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-3' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
-        },
-      ],
-      services: [],
-      events: [],
-    };
-  },
-  goalCheck: (state: ClusterState) => {
-    // PDB exists
-    if (!state.podDisruptionBudgets.some((p) => p.metadata.name === 'web-pdb')) return false;
-    // A node was drained
-    if (!state.nodes.some((n) => n.spec.unschedulable === true)) return false;
-    // All 3 pods running
-    const runningWeb = state.pods.filter(
-      (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
-    );
-    return runningWeb.length >= 3;
-  },
+        return {
+          pods,
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: { name: 'web', uid: depUid, labels: { app: 'web' }, creationTimestamp: Date.now() - 120000 },
+              spec: {
+                replicas: 3,
+                selector: { app: 'web' },
+                template: { labels: { app: 'web', 'pod-template-hash': hash }, spec: { image } },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: { replicas: 3, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, conditions: [] },
+            },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`, uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: { kind: 'Deployment', name: 'web', uid: depUid },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3, selector: { app: 'web', 'pod-template-hash': hash },
+                template: { labels: { app: 'web', 'pod-template-hash': hash }, spec: { image } },
+              },
+              status: { replicas: 3, readyReplicas: 3 },
+            },
+          ],
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-3', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-3' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+          ],
+          services: [],
+          events: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        // PDB exists
+        if (!state.podDisruptionBudgets.some((p) => p.metadata.name === 'web-pdb')) return false;
+        // A node was drained
+        if (!state.nodes.some((n) => n.spec.unschedulable === true)) return false;
+        // All 3 pods running
+        const runningWeb = state.pods.filter(
+          (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+        );
+        return runningWeb.length >= 3;
+      },
+    },
+  ],
 };

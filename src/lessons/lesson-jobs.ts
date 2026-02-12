@@ -13,41 +13,6 @@ export const lessonJobs: Lesson = {
   successMessage:
     'The Job completed all 3 tasks successfully despite a pod failure. The Job controller automatically retried the failed pod — ' +
     'this is how Jobs handle transient failures with backoffLimit retries.',
-  yamlTemplate: `apiVersion: batch/v1
-kind: Job
-metadata:
-  name: data-migration
-spec:
-  completions: ???
-  parallelism: 1
-  template:
-    spec:
-      containers:
-      - name: migrate
-        image: ???
-      restartPolicy: Never`,
-  hints: [
-    { text: 'Switch to the YAML Editor tab — fill in completions as 3 and image as "migrate:1.0". Then click Apply.' },
-    { text: 'Or use the terminal: kubectl create job data-migration --image=migrate:1.0 --completions=3', exact: false },
-    { text: 'One pod will fail around tick 2 — this is expected. The Job controller retries automatically.' },
-    { text: 'Keep reconciling until kubectl get jobs shows 3/3 completions.' },
-  ],
-  goals: [
-    {
-      description: 'Create a Job named "data-migration" with 3 completions',
-      check: (s: ClusterState) => {
-        const j = s.jobs.find(j => j.metadata.name === 'data-migration');
-        return !!j && j.spec.completions === 3;
-      },
-    },
-    {
-      description: 'Job reaches 3/3 successful completions',
-      check: (s: ClusterState) => {
-        const job = s.jobs.find(j => j.metadata.name === 'data-migration');
-        return !!job && (job.status.succeeded || 0) >= 3;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -191,67 +156,184 @@ spec:
         'For critical batch work, consider setting a higher backoffLimit, implementing idempotent tasks (so retries are safe), and building monitoring to detect partial Job failures.',
     },
   ],
-  initialState: () => {
-    const nodeNames = ['node-1', 'node-2'];
-    const nodes = nodeNames.map((name) => ({
-      kind: 'Node' as const,
-      metadata: {
-        name,
-        uid: generateUID(),
-        labels: { 'kubernetes.io/hostname': name },
-        creationTimestamp: Date.now() - 300000,
+  practices: [
+    {
+      title: 'Run a Job with Retries',
+      goalDescription:
+        'Create a Job named "data-migration" with image migrate:1.0 and 3 completions. One pod will fail during execution — the Job controller retries automatically. Verify all 3 completions succeed.',
+      successMessage:
+        'The Job completed all 3 tasks successfully despite a pod failure. The Job controller automatically retried the failed pod — ' +
+        'this is how Jobs handle transient failures with backoffLimit retries.',
+      yamlTemplate: `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-migration
+spec:
+  completions: ???
+  parallelism: 1
+  template:
+    spec:
+      containers:
+      - name: migrate
+        image: ???
+      restartPolicy: Never`,
+      hints: [
+        { text: 'Switch to the YAML Editor tab — fill in completions as 3 and image as "migrate:1.0". Then click Apply.' },
+        { text: 'Or use the terminal: kubectl create job data-migration --image=migrate:1.0 --completions=3', exact: false },
+        { text: 'One pod will fail around tick 2 — this is expected. The Job controller retries automatically.' },
+        { text: 'Keep reconciling until kubectl get jobs shows 3/3 completions.' },
+      ],
+      goals: [
+        {
+          description: 'Use "kubectl create job" or "kubectl apply" to create the Job',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-job') || (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'Use "kubectl get jobs" to monitor Job progress',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-jobs'),
+        },
+        {
+          description: 'Create a Job named "data-migration" with 3 completions',
+          check: (s: ClusterState) => {
+            const j = s.jobs.find(j => j.metadata.name === 'data-migration');
+            return !!j && j.spec.completions === 3;
+          },
+        },
+        {
+          description: 'Job reaches 3/3 successful completions',
+          check: (s: ClusterState) => {
+            const job = s.jobs.find(j => j.metadata.name === 'data-migration');
+            return !!job && (job.status.succeeded || 0) >= 3;
+          },
+        },
+      ],
+      initialState: () => {
+        const nodeNames = ['node-1', 'node-2'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: { capacity: { pods: 5 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 0,
+          },
+        }));
+
+        return {
+          pods: [],
+          replicaSets: [],
+          deployments: [],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
       },
-      spec: { capacity: { pods: 5 } },
-      status: {
-        conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-        allocatedPods: 0,
+      afterTick: (tick: number, state: ClusterState) => {
+        // At tick 2, fail one running job pod to demonstrate failure handling
+        if (tick === 2) {
+          const jobPods = state.pods.filter(
+            (p) =>
+              p.metadata.labels['job-name'] === 'data-migration' &&
+              p.status.phase === 'Running' &&
+              !p.metadata.deletionTimestamp
+          );
+          if (jobPods.length > 0) {
+            const victim = jobPods[0];
+            victim.status.phase = 'Failed';
+            if (!victim.spec.logs) victim.spec.logs = [];
+            victim.spec.logs.push('[error] Connection reset by peer');
+            victim.spec.logs.push('[fatal] Process exited with code 1');
+          }
+        }
+        return state;
       },
-    }));
+      goalCheck: (state: ClusterState) => {
+        if (state.jobs.length < 1) return false;
 
-    return {
-      pods: [],
-      replicaSets: [],
-      deployments: [],
-      nodes,
-      services: [],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  afterTick: (tick, state) => {
-    // At tick 2, fail one running job pod to demonstrate failure handling
-    if (tick === 2) {
-      const jobPods = state.pods.filter(
-        (p) =>
-          p.metadata.labels['job-name'] === 'data-migration' &&
-          p.status.phase === 'Running' &&
-          !p.metadata.deletionTimestamp
-      );
-      if (jobPods.length > 0) {
-        const victim = jobPods[0];
-        victim.status.phase = 'Failed';
-        if (!victim.spec.logs) victim.spec.logs = [];
-        victim.spec.logs.push('[error] Connection reset by peer');
-        victim.spec.logs.push('[fatal] Process exited with code 1');
-      }
-    }
-    return state;
-  },
-  goalCheck: (state) => {
-    if (state.jobs.length < 1) return false;
+        const job = state.jobs.find((j) => j.metadata.name === 'data-migration');
+        if (!job) return false;
 
-    const job = state.jobs.find((j) => j.metadata.name === 'data-migration');
-    if (!job) return false;
+        return job.status.succeeded >= 3;
+      },
+    },
+    {
+      title: 'Schedule a CronJob',
+      goalDescription:
+        'Create a CronJob named "db-backup" with image "backup:1.0" and schedule "0 * * * *" (every hour). The CronJob should create Jobs with 1 completion.',
+      successMessage:
+        'The CronJob is configured to run hourly. In production, CronJobs handle recurring tasks like backups, report generation, and cleanup. Use concurrencyPolicy to control what happens when a previous Job is still running.',
+      hints: [
+        { text: 'Use kubectl create cronjob to create a scheduled Job.' },
+        { text: 'kubectl create cronjob db-backup --image=backup:1.0 --schedule="0 * * * *"', exact: true },
+      ],
+      goals: [
+        {
+          description: 'CronJob "db-backup" exists',
+          check: (s: ClusterState) => s.cronJobs.some(cj => cj.metadata.name === 'db-backup'),
+        },
+        {
+          description: 'CronJob has schedule "0 * * * *"',
+          check: (s: ClusterState) => {
+            const cj = s.cronJobs.find(cj => cj.metadata.name === 'db-backup');
+            return !!cj && cj.spec.schedule === '0 * * * *';
+          },
+        },
+      ],
+      initialState: () => {
+        const nodeNames = ['node-1', 'node-2'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: { capacity: { pods: 5 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 0,
+          },
+        }));
 
-    return job.status.succeeded >= 3;
-  },
+        return {
+          pods: [],
+          replicaSets: [],
+          deployments: [],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        const cj = state.cronJobs.find((c) => c.metadata.name === 'db-backup');
+        return !!cj && cj.spec.schedule === '0 * * * *';
+      },
+    },
+  ],
 };

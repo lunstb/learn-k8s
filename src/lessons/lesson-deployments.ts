@@ -13,29 +13,6 @@ export const lessonDeployments: Lesson = {
   successMessage:
     'Rolling update complete! Two ReplicaSets coexisted during transition. ' +
     'The old RS scaled down as the new one scaled up.',
-  hints: [
-    { text: 'Use kubectl set image to update a deployment\'s container image.' },
-    { text: 'kubectl set image deployment/my-app nginx:2.0', exact: true },
-    { text: 'Reconcile multiple times to step through the rolling update — watch the old ReplicaSet shrink and new one grow.' },
-  ],
-  goals: [
-    {
-      description: 'Update the deployment image to nginx:2.0',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
-        return !!dep && dep.spec.template.spec.image === 'nginx:2.0';
-      },
-    },
-    {
-      description: 'All 3 pods running nginx:2.0',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
-        if (!dep) return false;
-        const activePods = s.pods.filter(p => !p.metadata.deletionTimestamp && p.status.phase === 'Running' && s.replicaSets.some(rs => rs.metadata.ownerReference?.uid === dep.metadata.uid && rs.metadata.uid === p.metadata.ownerReference?.uid));
-        return activePods.length === 3 && activePods.every(p => p.spec.image === 'nginx:2.0');
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -109,6 +86,22 @@ export const lessonDeployments: Lesson = {
         keyTakeaway:
           'Use RollingUpdate (default) for zero-downtime deploys. Use Recreate only when you cannot run two versions simultaneously (e.g., database migrations with schema changes).',
       },
+      {
+        title: 'Rollback: When You Need to Undo',
+        content:
+          'After a rolling update completes, the old ReplicaSet is kept around at 0 replicas. ' +
+          'It\'s not deleted — it holds the previous pod template as revision history. This is by design.\n\n' +
+          'If the new version turns out to be broken (crashes, wrong behavior, performance issues), ' +
+          'you can roll back instantly with `kubectl rollout undo deployment/<name>`. This reverts the ' +
+          'Deployment\'s template to the previous ReplicaSet\'s template. The Deployment controller then ' +
+          'performs a rolling update back to the old image — scaling up the old RS and scaling down the new one.\n\n' +
+          'This is why two ReplicaSets coexist after an update. The old RS at 0 replicas is your safety net. ' +
+          'A rollback doesn\'t rebuild anything — it reuses the existing RS, making it near-instant.\n\n' +
+          'The number of old ReplicaSets kept is controlled by revisionHistoryLimit (default 10). ' +
+          'In this simulator, the most recent old RS is always preserved for rollback.',
+        keyTakeaway:
+          'Old ReplicaSets at 0 replicas are revision history, not garbage. `kubectl rollout undo` instantly reverts to the previous template. This is why the two-RS design exists — instant, safe rollback.',
+      },
     ],
   },
   quiz: [
@@ -176,106 +169,368 @@ export const lessonDeployments: Lesson = {
         'old pods keep serving, but you are stuck with a partially completed update. This is the classic case where the Recreate strategy is appropriate: ' +
         'you accept brief downtime to ensure only one version runs at a time, deploying the schema change before the code change.',
     },
-  ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
-
-    const pods = Array.from({ length: 3 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`my-app-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'my-app', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `my-app-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image },
-      status: { phase: 'Running' as const },
-    }));
-
-    return {
-      deployments: [
-        {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'my-app',
-            uid: depUid,
-            labels: { app: 'my-app' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 3,
-            selector: { app: 'my-app' },
-            template: {
-              labels: { app: 'my-app' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 3,
-            updatedReplicas: 3,
-            readyReplicas: 3,
-            availableReplicas: 3,
-            conditions: [{ type: 'Available', status: 'True' }],
-          },
-        },
+    {
+      question:
+        'You\'re deploying a database migration. The new schema removes a column the old code uses. Both old and new versions of the app will be running during a RollingUpdate. What deployment strategy should you use?',
+      choices: [
+        'RollingUpdate with maxUnavailable=0 so old pods are never removed until new pods prove they work',
+        'Recreate — you cannot run both versions simultaneously because the old code depends on the removed column',
+        'RollingUpdate with maxSurge=0 so no extra pods run, preventing both versions from coexisting',
+        'Blue-green deployment using two separate Deployments with a Service switch',
       ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
+      correctIndex: 1,
+      explanation:
+        'The Recreate strategy is designed for exactly this scenario. It kills all old pods before creating new ones, ensuring only one version runs at a time. ' +
+        'With RollingUpdate, old-code pods would fail when the column is removed, causing errors for users during the transition. ' +
+        'maxUnavailable=0 or maxSurge=0 still allows both versions to run simultaneously — they just control the rollout speed, not version coexistence. ' +
+        'Recreate causes brief downtime but guarantees a clean version cutover.',
+    },
+  ],
+  practices: [
+    {
+      title: 'Perform a Rolling Update',
+      goalDescription:
+        'Update the "my-app" Deployment image from nginx:1.0 to nginx:2.0 and reconcile until all 3 pods run the new version.',
+      successMessage:
+        'Rolling update complete! Two ReplicaSets coexisted during transition. The old RS scaled down as the new one scaled up.',
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `my-app-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name: generatePodName(`my-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'my-app', 'pod-template-hash': hash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'my-app',
-              uid: depUid,
+              kind: 'ReplicaSet',
+              name: `my-app-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 3,
-            selector: { app: 'my-app', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'my-app', 'pod-template-hash': hash },
-              spec: { image },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'my-app',
+                uid: depUid,
+                labels: { app: 'my-app' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'my-app' },
+                template: {
+                  labels: { app: 'my-app' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 3,
+                updatedReplicas: 3,
+                readyReplicas: 3,
+                availableReplicas: 3,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
             },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `my-app-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'my-app', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'my-app',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'my-app', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'my-app', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 3, readyReplicas: 3 },
+            },
+          ],
+          pods,
+          nodes: [],
+          services: [],
+          events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl set image" to trigger a rolling update',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
+        },
+        {
+          description: 'Update the deployment image to nginx:2.0',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+            return !!dep && dep.spec.template.spec.image === 'nginx:2.0';
           },
-          status: { replicas: 3, readyReplicas: 3 },
+        },
+        {
+          description: 'All 3 pods running nginx:2.0',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+            if (!dep) return false;
+            const activePods = s.pods.filter(p => !p.metadata.deletionTimestamp && p.status.phase === 'Running' && s.replicaSets.some(rs => rs.metadata.ownerReference?.uid === dep.metadata.uid && rs.metadata.uid === p.metadata.ownerReference?.uid));
+            return activePods.length === 3 && activePods.every(p => p.spec.image === 'nginx:2.0');
+          },
         },
       ],
-      pods,
-      nodes: [],
-      services: [],
-      events: [],
-    };
-  },
-  goalCheck: (state) => {
-    const dep = state.deployments.find((d) => d.metadata.name === 'my-app');
-    if (!dep) return false;
-    if (dep.spec.template.spec.image !== 'nginx:2.0') return false;
+      hints: [
+        { text: 'Use kubectl set image to update a deployment\'s container image.' },
+        { text: 'kubectl set image deployment/my-app nginx:2.0', exact: true },
+        { text: 'Reconcile multiple times to step through the rolling update — watch the old ReplicaSet shrink and new one grow.' },
+      ],
+    },
+    {
+      title: 'Observe Two ReplicaSets',
+      goalDescription:
+        'Update the "web-app" Deployment image to nginx:2.0 and use "kubectl get rs" to observe two ReplicaSets during the rollout. End state: 3 pods Running nginx:2.0.',
+      successMessage:
+        'You observed two ReplicaSets during a rollout! The old RS stays at 0 replicas as revision history for potential rollback.',
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const oldRsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+        const oldImage = 'nginx:0.9';
+        const oldHash = templateHash({ image: oldImage });
 
-    const activePods = state.pods.filter(
-      (p) =>
-        !p.metadata.deletionTimestamp &&
-        p.status.phase === 'Running' &&
-        state.replicaSets.some(
-          (rs) =>
-            rs.metadata.ownerReference?.uid === dep.metadata.uid &&
-            rs.metadata.uid === p.metadata.ownerReference?.uid
-        )
-    );
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`web-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'web-app', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `web-app-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
 
-    const allNewVersion = activePods.every((p) => p.spec.image === 'nginx:2.0');
-    return activePods.length === 3 && allNewVersion;
-  },
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'web-app', uid: depUid, labels: { app: 'web-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 3, selector: { app: 'web-app' },
+              template: { labels: { app: 'web-app' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 3, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, conditions: [{ type: 'Available', status: 'True' }] },
+          }],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-app-${hash.slice(0, 10)}`, uid: rsUid,
+                labels: { app: 'web-app', 'pod-template-hash': hash },
+                ownerReference: { kind: 'Deployment', name: 'web-app', uid: depUid },
+                creationTimestamp: Date.now() - 60000,
+              },
+              spec: {
+                replicas: 3, selector: { app: 'web-app', 'pod-template-hash': hash },
+                template: { labels: { app: 'web-app', 'pod-template-hash': hash }, spec: { image } },
+              },
+              status: { replicas: 3, readyReplicas: 3 },
+            },
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-app-${oldHash.slice(0, 10)}`, uid: oldRsUid,
+                labels: { app: 'web-app', 'pod-template-hash': oldHash },
+                ownerReference: { kind: 'Deployment', name: 'web-app', uid: depUid },
+                creationTimestamp: Date.now() - 180000,
+              },
+              spec: {
+                replicas: 0, selector: { app: 'web-app', 'pod-template-hash': oldHash },
+                template: { labels: { app: 'web-app', 'pod-template-hash': oldHash }, spec: { image: oldImage } },
+              },
+              status: { replicas: 0, readyReplicas: 0 },
+            },
+          ],
+          pods, nodes: [], services: [], events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl get rs" to see the ReplicaSets',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-rs'),
+        },
+        {
+          description: 'Use "kubectl set image" to update the deployment',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
+        },
+        {
+          description: 'Update the deployment image to nginx:2.0',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+            return !!dep && dep.spec.template.spec.image === 'nginx:2.0';
+          },
+        },
+        {
+          description: 'All 3 pods Running with nginx:2.0',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+            if (!dep) return false;
+            const activePods = s.pods.filter(p => !p.metadata.deletionTimestamp && p.status.phase === 'Running' && p.spec.image === 'nginx:2.0' && s.replicaSets.some(rs => rs.metadata.ownerReference?.uid === dep.metadata.uid && rs.metadata.uid === p.metadata.ownerReference?.uid));
+            return activePods.length === 3;
+          },
+        },
+      ],
+      hints: [
+        { text: 'Start by running "kubectl get rs" to see the current ReplicaSets. Notice the old one at 0 replicas.' },
+        { text: 'kubectl get rs', exact: true },
+        { text: 'Now update the image and reconcile. Run "kubectl get rs" again during the rollout to see two active RS.' },
+        { text: 'kubectl set image deployment/web-app nginx:2.0', exact: true },
+      ],
+      steps: [{
+        id: 'intro-observe',
+        trigger: 'onLoad' as const,
+        instruction: 'Use "kubectl get rs" to see the ReplicaSets. Notice the old RS at 0 replicas from a previous update. Then update the image to nginx:2.0 and watch a new RS appear.',
+      }],
+    },
+    {
+      title: 'Rollback a Bad Deployment',
+      goalDescription:
+        'Deploy a bad image that crashes, observe the stalled rollout, then use "kubectl rollout undo" to rollback. End state: 3 healthy pods running the original image.',
+      successMessage:
+        'You rolled back a bad deployment! The old ReplicaSet was preserved at 0 replicas precisely for this — instant rollback without rebuilding.',
+      podFailureRules: { 'bad-app:2.0': 'CrashLoopBackOff' },
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const oldRsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+        const oldImage = 'nginx:0.9';
+        const oldHash = templateHash({ image: oldImage });
+
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`web-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'web-app', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `web-app-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'web-app', uid: depUid, labels: { app: 'web-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 3, selector: { app: 'web-app' },
+              template: { labels: { app: 'web-app' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 3, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, conditions: [{ type: 'Available', status: 'True' }] },
+          }],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-app-${hash.slice(0, 10)}`, uid: rsUid,
+                labels: { app: 'web-app', 'pod-template-hash': hash },
+                ownerReference: { kind: 'Deployment', name: 'web-app', uid: depUid },
+                creationTimestamp: Date.now() - 60000,
+              },
+              spec: {
+                replicas: 3, selector: { app: 'web-app', 'pod-template-hash': hash },
+                template: { labels: { app: 'web-app', 'pod-template-hash': hash }, spec: { image } },
+              },
+              status: { replicas: 3, readyReplicas: 3 },
+            },
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-app-${oldHash.slice(0, 10)}`, uid: oldRsUid,
+                labels: { app: 'web-app', 'pod-template-hash': oldHash },
+                ownerReference: { kind: 'Deployment', name: 'web-app', uid: depUid },
+                creationTimestamp: Date.now() - 180000,
+              },
+              spec: {
+                replicas: 0, selector: { app: 'web-app', 'pod-template-hash': oldHash },
+                template: { labels: { app: 'web-app', 'pod-template-hash': oldHash }, spec: { image: oldImage } },
+              },
+              status: { replicas: 0, readyReplicas: 0 },
+            },
+          ],
+          pods, nodes: [], services: [], events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl set image" to deploy the bad image',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
+        },
+        {
+          description: 'Deploy a bad image (set image to "bad-app:2.0")',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+            return !!dep && dep.spec.template.spec.image === 'bad-app:2.0';
+          },
+        },
+        {
+          description: 'Use "kubectl get pods" to observe the crash',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
+        },
+        {
+          description: 'Rollback with "kubectl rollout undo"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('rollout-undo'),
+        },
+        {
+          description: 'All 3 pods Running with the rolled-back image',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+            if (!dep) return false;
+            const activePods = s.pods.filter(p =>
+              !p.metadata.deletionTimestamp &&
+              p.status.phase === 'Running' &&
+              s.replicaSets.some(rs => rs.metadata.ownerReference?.uid === dep.metadata.uid && rs.metadata.uid === p.metadata.ownerReference?.uid)
+            );
+            return activePods.length === 3 && activePods.every(p => p.spec.image !== 'bad-app:2.0');
+          },
+        },
+      ],
+      hints: [
+        { text: 'First deploy a bad image to see what happens during a failed rollout.' },
+        { text: 'kubectl set image deployment/web-app bad-app:2.0', exact: true },
+        { text: 'Reconcile and run "kubectl get pods" to see the CrashLoopBackOff. Old pods still serve traffic!' },
+        { text: 'Use rollout undo to revert: kubectl rollout undo deployment/web-app', exact: true },
+      ],
+      steps: [{
+        id: 'intro-rollback',
+        trigger: 'onLoad' as const,
+        instruction: 'Deploy a bad image: "kubectl set image deployment/web-app bad-app:2.0". Reconcile, then use "kubectl get pods" to see the crash. Finally, rollback with "kubectl rollout undo deployment/web-app".',
+      }],
+    },
+  ],
 };

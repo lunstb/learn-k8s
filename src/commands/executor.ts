@@ -2,8 +2,7 @@ import { useSimulatorStore } from '../simulation/store';
 import { parseCommand } from './parser';
 import type { ParsedCommand } from './parser';
 import type { Deployment, Pod, Service, Namespace, ConfigMap, Secret, Ingress, StatefulSet, DaemonSet, Job, CronJob, HorizontalPodAutoscaler, StorageClass, PersistentVolume, PersistentVolumeClaim, PodDisruptionBudget } from '../simulation/types';
-import { labelsMatch } from '../simulation/utils';
-import { generateUID } from '../simulation/utils';
+import { labelsMatch, generateUID, templateHash } from '../simulation/utils';
 import { parseYaml, toYaml } from './yaml-parser';
 
 export function executeCommand(input: string): string[] {
@@ -26,14 +25,18 @@ export function executeCommand(input: string): string[] {
 
   // Auto-detect bare YAML pasting (multi-line starting with apiVersion: or kind:)
   if (trimmed.includes('\n') && /^(apiVersion|kind)\s*:/m.test(trimmed)) {
-    return handleApplyYaml(trimmed);
+    const result = handleApplyYaml(trimmed);
+    if (store.cluster._commandsUsed) store.cluster._commandsUsed.push('apply');
+    return result;
   }
 
   // Handle "kubectl apply -f -" with YAML content after the command
   if (/^(kubectl\s+)?apply\s+-f\s+-\s*\n/i.test(trimmed)) {
     const yamlStart = trimmed.indexOf('\n');
     const yamlContent = trimmed.substring(yamlStart + 1);
-    return handleApplyYaml(yamlContent);
+    const result = handleApplyYaml(yamlContent);
+    if (store.cluster._commandsUsed) store.cluster._commandsUsed.push('apply');
+    return result;
   }
 
   const result = parseCommand(input);
@@ -44,50 +47,91 @@ export function executeCommand(input: string): string[] {
 
   const cmd = result as ParsedCommand;
 
+  let output: string[];
   switch (cmd.action) {
     case 'create':
-      return handleCreate(cmd);
+      output = handleCreate(cmd); break;
     case 'get':
-      return handleGet(cmd);
+      output = handleGet(cmd); break;
     case 'delete':
-      return handleDelete(cmd);
+      output = handleDelete(cmd); break;
     case 'scale':
-      return handleScale(cmd);
+      output = handleScale(cmd); break;
     case 'set-image':
-      return handleSetImage(cmd);
+      output = handleSetImage(cmd); break;
     case 'describe':
-      return handleDescribe(cmd);
+      output = handleDescribe(cmd); break;
     case 'rollout-status':
-      return handleRolloutStatus(cmd);
+      output = handleRolloutStatus(cmd); break;
     case 'rollout-restart':
-      return handleRolloutRestart(cmd);
+      output = handleRolloutRestart(cmd); break;
+    case 'rollout-undo':
+      output = handleRolloutUndo(cmd); break;
     case 'cordon':
-      return handleCordon(cmd, false);
+      output = handleCordon(cmd, false); break;
     case 'uncordon':
-      return handleCordon(cmd, true);
+      output = handleCordon(cmd, true); break;
     case 'helm-install':
-      return handleHelmInstall(cmd);
+      output = handleHelmInstall(cmd); break;
     case 'helm-list':
-      return handleHelmList();
+      output = handleHelmList(); break;
     case 'helm-uninstall':
-      return handleHelmUninstall(cmd);
+      output = handleHelmUninstall(cmd); break;
     case 'autoscale':
-      return handleAutoscale(cmd);
+      output = handleAutoscale(cmd); break;
     case 'logs':
-      return handleLogs(cmd);
+      output = handleLogs(cmd); break;
     case 'apply':
-      return handleApply(cmd);
+      output = handleApply(cmd); break;
     case 'label':
-      return handleLabel(cmd);
+      output = handleLabel(cmd); break;
     case 'drain':
-      return handleDrain(cmd);
+      output = handleDrain(cmd); break;
     case 'taint':
-      return handleTaint(cmd);
+      output = handleTaint(cmd); break;
     case 'patch':
-      return handlePatch(cmd);
+      output = handlePatch(cmd); break;
     default:
-      return [`Error: Unimplemented action "${cmd.action}"`];
+      output = [`Error: Unimplemented action "${cmd.action}"`]; break;
   }
+
+  // Track commands used for exercise goal checks
+  const cluster = store.cluster;
+  if (cluster._commandsUsed) {
+    // Read commands
+    if (cmd.action === 'logs') cluster._commandsUsed.push('logs');
+    if (cmd.action === 'describe') cluster._commandsUsed.push(`describe-${cmd.resourceType}`);
+    if (cmd.action === 'get') cluster._commandsUsed.push(`get-${cmd.resourceType}s`);
+    // Normalize common plurals
+    if (cmd.action === 'get' && cmd.resourceType === 'pod') cluster._commandsUsed.push('get-pods');
+    if (cmd.action === 'get' && cmd.resourceType === 'replicaset') cluster._commandsUsed.push('get-rs');
+    if (cmd.action === 'get' && cmd.resourceType === 'endpoints') cluster._commandsUsed.push('get-endpoints');
+    // Write commands
+    if (cmd.action === 'create') cluster._commandsUsed.push(`create-${cmd.resourceType}`);
+    if (cmd.action === 'set-image') cluster._commandsUsed.push('set-image');
+    if (cmd.action === 'scale') cluster._commandsUsed.push('scale');
+    if (cmd.action === 'delete') cluster._commandsUsed.push(`delete-${cmd.resourceType}`);
+    if (cmd.action === 'patch') cluster._commandsUsed.push('patch');
+    if (cmd.action === 'label') cluster._commandsUsed.push('label');
+    if (cmd.action === 'apply') cluster._commandsUsed.push('apply');
+    // Node management
+    if (cmd.action === 'drain') cluster._commandsUsed.push('drain');
+    if (cmd.action === 'cordon') cluster._commandsUsed.push('cordon');
+    if (cmd.action === 'uncordon') cluster._commandsUsed.push('uncordon');
+    if (cmd.action === 'taint') cluster._commandsUsed.push('taint');
+    // Rollout commands
+    if (cmd.action === 'rollout-status') cluster._commandsUsed.push('rollout-status');
+    if (cmd.action === 'rollout-undo') cluster._commandsUsed.push('rollout-undo');
+    if (cmd.action === 'rollout-restart') cluster._commandsUsed.push('rollout-restart');
+    // Autoscale
+    if (cmd.action === 'autoscale') cluster._commandsUsed.push('autoscale');
+    // Helm commands
+    if (cmd.action === 'helm-install') cluster._commandsUsed.push('helm-install');
+    if (cmd.action === 'helm-list') cluster._commandsUsed.push('helm-list');
+    if (cmd.action === 'helm-uninstall') cluster._commandsUsed.push('helm-uninstall');
+  }
+
+  return output;
 }
 
 function isDryRun(cmd: ParsedCommand): boolean {
@@ -1681,6 +1725,62 @@ function handleRolloutRestart(cmd: ParsedCommand): string[] {
   });
 
   return [`deployment.apps/${cmd.resourceName} restarted`];
+}
+
+function handleRolloutUndo(cmd: ParsedCommand): string[] {
+  const store = useSimulatorStore.getState();
+  if (cmd.resourceType !== 'deployment') {
+    return ['Error: rollout undo only supports deployments.'];
+  }
+  const dep = store.cluster.deployments.find(
+    (d) => d.metadata.name === cmd.resourceName
+  );
+  if (!dep) return [`Error: deployment "${cmd.resourceName}" not found`];
+
+  // Find all owned ReplicaSets (not deleted)
+  const ownedRS = store.cluster.replicaSets.filter(
+    (rs) =>
+      rs.metadata.ownerReference?.uid === dep.metadata.uid &&
+      !rs.metadata.deletionTimestamp
+  );
+
+  // The active RS matches the current deployment template hash
+  const currentHash = templateHash(dep.spec.template.spec);
+  const activeRS = ownedRS.find(
+    (rs) => rs.metadata.labels['pod-template-hash'] === currentHash
+  );
+
+  // The previous RS is the most recent RS that is NOT the active one
+  const previousRS = ownedRS
+    .filter((rs) => rs.metadata.uid !== activeRS?.metadata.uid)
+    .sort((a, b) => (b.metadata.creationTimestamp ?? 0) - (a.metadata.creationTimestamp ?? 0))[0];
+
+  if (!previousRS) {
+    return [`Error: No rollout history for deployment/${cmd.resourceName}`];
+  }
+
+  // Copy previous RS's template spec back onto deployment
+  store.updateDeployment(dep.metadata.uid, {
+    spec: {
+      ...dep.spec,
+      template: {
+        ...dep.spec.template,
+        spec: { ...previousRS.spec.template.spec },
+      },
+    },
+  });
+
+  store.addEvent({
+    timestamp: Date.now(),
+    tick: store.cluster.tick,
+    type: 'Normal',
+    reason: 'RolloutUndo',
+    objectKind: 'Deployment',
+    objectName: cmd.resourceName,
+    message: `Rolled back deployment "${cmd.resourceName}" to previous revision`,
+  });
+
+  return [`deployment.apps/${cmd.resourceName} rolled back`];
 }
 
 function handleCordon(cmd: ParsedCommand, uncordon: boolean): string[] {

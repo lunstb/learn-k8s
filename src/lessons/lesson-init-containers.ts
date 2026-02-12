@@ -12,50 +12,6 @@ export const lessonInitContainers: Lesson = {
     'Apply a Pod with an init container and observe the init → main container lifecycle. Then see what happens when an init container fails.',
   successMessage:
     'You observed init containers running sequentially before the main container. Failed init containers block the pod from starting — a critical pattern for enforcing startup dependencies.',
-  yamlTemplate: `apiVersion: v1
-kind: Pod
-metadata:
-  name: app-with-init
-  labels:
-    app: myapp
-spec:
-  initContainers:
-  - name: wait-for-db
-    image: busybox:check-db
-  containers:
-  - name: app
-    image: myapp:1.0`,
-  hints: [
-    { text: 'Apply the YAML in the editor to create a pod with an init container.' },
-    { text: 'Watch the pod status — the init container runs first, then the main container starts.' },
-    { text: 'Run `kubectl describe pod app-with-init` to see init container statuses.' },
-    { text: 'Now create a pod with a failing init container to see what happens.' },
-  ],
-  goals: [
-    {
-      description: 'Pod "app-with-init" exists with an init container',
-      check: (s: ClusterState) => {
-        return s.pods.some(
-          (p) => p.metadata.name === 'app-with-init' && p.spec.initContainers && p.spec.initContainers.length > 0
-        );
-      },
-    },
-    {
-      description: 'Init container completed successfully',
-      check: (s: ClusterState) => {
-        const pod = s.pods.find((p) => p.metadata.name === 'app-with-init');
-        if (!pod || !pod.status.initContainerStatuses) return false;
-        return pod.status.initContainerStatuses.every((ic) => ic.state === 'completed');
-      },
-    },
-    {
-      description: 'Main container is Running',
-      check: (s: ClusterState) => {
-        const pod = s.pods.find((p) => p.metadata.name === 'app-with-init');
-        return !!pod && pod.status.phase === 'Running' && !pod.metadata.deletionTimestamp;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -262,28 +218,179 @@ spec:
         'fetching secrets from Vault, cloning git repos, generating TLS certificates, and pre-populating caches.',
     },
   ],
-  initialState: () => {
-    return {
-      pods: [],
-      replicaSets: [],
-      deployments: [],
-      nodes: [
+  practices: [
+    {
+      title: 'Use Init Containers',
+      goalDescription:
+        'Apply a Pod with an init container and observe the init → main container lifecycle. Then see what happens when an init container fails.',
+      successMessage:
+        'You observed init containers running sequentially before the main container. Failed init containers block the pod from starting — a critical pattern for enforcing startup dependencies.',
+      yamlTemplate: `apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-init
+  labels:
+    app: myapp
+spec:
+  initContainers:
+  - name: wait-for-db
+    image: busybox:check-db
+  containers:
+  - name: app
+    image: myapp:1.0`,
+      hints: [
+        { text: 'Apply the YAML in the editor to create a pod with an init container.' },
+        { text: 'Watch the pod status — the init container runs first, then the main container starts.' },
+        { text: 'Run `kubectl describe pod app-with-init` to see init container statuses.' },
+        { text: 'Now create a pod with a failing init container to see what happens.' },
+      ],
+      goals: [
         {
-          kind: 'Node' as const,
-          metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+          description: 'Use "kubectl apply" to create the pod with init containers',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'Use "kubectl describe pod" to inspect init container status',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-pod'),
+        },
+        {
+          description: 'Pod "app-with-init" exists with an init container',
+          check: (s: ClusterState) => {
+            return s.pods.some(
+              (p) => p.metadata.name === 'app-with-init' && p.spec.initContainers && p.spec.initContainers.length > 0
+            );
+          },
+        },
+        {
+          description: 'Init container completed successfully',
+          check: (s: ClusterState) => {
+            const pod = s.pods.find((p) => p.metadata.name === 'app-with-init');
+            if (!pod || !pod.status.initContainerStatuses) return false;
+            return pod.status.initContainerStatuses.every((ic) => ic.state === 'completed');
+          },
+        },
+        {
+          description: 'Main container is Running',
+          check: (s: ClusterState) => {
+            const pod = s.pods.find((p) => p.metadata.name === 'app-with-init');
+            return !!pod && pod.status.phase === 'Running' && !pod.metadata.deletionTimestamp;
+          },
         },
       ],
-      services: [],
-      events: [],
-    };
-  },
-  goalCheck: (state: ClusterState) => {
-    const pod = state.pods.find((p) => p.metadata.name === 'app-with-init');
-    if (!pod) return false;
-    if (!pod.status.initContainerStatuses) return false;
-    const allInitDone = pod.status.initContainerStatuses.every((ic) => ic.state === 'completed');
-    return allInitDone && pod.status.phase === 'Running' && !pod.metadata.deletionTimestamp;
-  },
+      initialState: () => {
+        return {
+          pods: [],
+          replicaSets: [],
+          deployments: [],
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+            },
+          ],
+          services: [],
+          events: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        const pod = state.pods.find((p) => p.metadata.name === 'app-with-init');
+        if (!pod) return false;
+        if (!pod.status.initContainerStatuses) return false;
+        const allInitDone = pod.status.initContainerStatuses.every((ic) => ic.state === 'completed');
+        return allInitDone && pod.status.phase === 'Running' && !pod.metadata.deletionTimestamp;
+      },
+    },
+    {
+      title: 'Debug a Stuck Init Container',
+      goalDescription:
+        'The "api-server" pod is stuck — its init container is waiting for a Service named "database-svc". Diagnose the issue with kubectl describe, then create the missing service.',
+      successMessage:
+        'Init containers block the main container until they complete. Common causes of stuck init containers: missing Services for dependency checks, missing ConfigMaps/Secrets, or network connectivity issues.',
+      hints: [
+        { text: 'Run kubectl describe pod api-server to see what the init container is waiting for.' },
+        { text: 'The init container is checking for a service called "database-svc".' },
+        { text: 'kubectl create service database-svc --selector=app=database --port=5432', exact: true },
+        { text: 'After creating the service, reconcile to let the init container complete.' },
+      ],
+      goals: [
+        {
+          description: 'Diagnose with "kubectl describe pod"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-pod'),
+        },
+        {
+          description: 'Create Service "database-svc"',
+          check: (s: ClusterState) => s.services.some(svc => svc.metadata.name === 'database-svc'),
+        },
+        {
+          description: 'Pod "api-server" main container is Running',
+          check: (s: ClusterState) => s.pods.some(p => p.metadata.name === 'api-server' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp),
+        },
+      ],
+      initialState: () => {
+        return {
+          pods: [
+            {
+              kind: 'Pod' as const,
+              metadata: {
+                name: 'api-server',
+                uid: generateUID(),
+                labels: { app: 'api-server' },
+                creationTimestamp: Date.now() - 60000,
+              },
+              spec: {
+                image: 'api-server:1.0',
+                initContainers: [{ name: 'wait-for-db', image: 'busybox:1.0' }],
+              },
+              status: {
+                phase: 'Pending' as const,
+                initContainerStatuses: [{ name: 'wait-for-db', state: 'waiting' as const }],
+              },
+            },
+          ],
+          replicaSets: [],
+          deployments: [],
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+            },
+          ],
+          services: [],
+          events: [],
+        };
+      },
+      afterTick: (_tick: number, state: ClusterState) => {
+        // If service "database-svc" exists, complete the init container and transition pod to Running
+        const dbSvc = state.services.find((s) => s.metadata.name === 'database-svc');
+        const pod = state.pods.find((p) => p.metadata.name === 'api-server' && !p.metadata.deletionTimestamp);
+        if (dbSvc && pod && pod.status.initContainerStatuses) {
+          const initStatus = pod.status.initContainerStatuses.find((ic) => ic.name === 'wait-for-db');
+          if (initStatus && initStatus.state === 'waiting') {
+            initStatus.state = 'completed';
+          }
+          const allDone = pod.status.initContainerStatuses.every((ic) => ic.state === 'completed');
+          if (allDone && pod.status.phase !== 'Running') {
+            pod.status.phase = 'Running';
+          }
+        }
+        return state;
+      },
+      goalCheck: (state: ClusterState) => {
+        const dbSvc = state.services.find((s) => s.metadata.name === 'database-svc');
+        if (!dbSvc) return false;
+        const pod = state.pods.find((p) => p.metadata.name === 'api-server' && !p.metadata.deletionTimestamp);
+        return !!pod && pod.status.phase === 'Running';
+      },
+    },
+  ],
 };

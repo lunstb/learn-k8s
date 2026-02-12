@@ -13,48 +13,24 @@ export const lessonDebugging: Lesson = {
   successMessage:
     'You diagnosed and fixed an ImagePullError using events and describe. ' +
     'ImagePullError = bad image name or missing tag. Always check the image string first when pods won\'t start.',
-  hints: [
-    { text: 'Try setting a deliberately bad image name to see what happens.' },
-    { text: 'kubectl set image deployment/web-app web-app=nignx:2.0', exact: true },
-    { text: 'Use kubectl get events to see the error. Fix the typo in the image name.' },
-    { text: 'kubectl set image deployment/web-app web-app=nginx:2.0', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Trigger an ImagePullError (deploy image "nignx:2.0" — note the typo)',
-      check: (s: ClusterState) => s.pods.some(p => p.status.reason === 'ImagePullError') || s.events.some(e => e.reason === 'Failed' && e.message.includes('ImagePullError')),
-    },
-    {
-      description: 'Fix the ImagePullError and get pods Running',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'web-app');
-        return !!dep && dep.spec.template.spec.image === 'nginx:2.0' && !s.pods.some(p => p.status.reason === 'ImagePullError' && !p.metadata.deletionTimestamp);
-      },
-    },
-    {
-      description: 'All 3 pods Running with image nginx:2.0',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'web-app');
-        if (!dep || dep.spec.template.spec.image !== 'nginx:2.0') return false;
-        const activePods = s.pods.filter(p => !p.metadata.deletionTimestamp && p.status.phase === 'Running' && p.spec.image === 'nginx:2.0' && s.replicaSets.some(rs => rs.metadata.ownerReference?.uid === dep.metadata.uid && rs.metadata.uid === p.metadata.ownerReference?.uid));
-        return activePods.length === 3;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
-        title: 'The Two Failures You\'ll See Constantly',
+        title: 'The Three Failures You\'ll See Constantly',
         content:
           'You deploy an update. Pods don\'t start. What went wrong? In Kubernetes, the answer is almost always ' +
-          'one of two things:\n\n' +
+          'one of three things:\n\n' +
           'ImagePullError: the container image can\'t be downloaded. You typoed the image name ' +
           '("nignx" instead of "nginx"), the tag doesn\'t exist, or the registry requires credentials you haven\'t configured. ' +
           'The pod stays Pending forever — it can\'t start because it can\'t get its container image.\n\n' +
           'CrashLoopBackOff: the image downloads fine, the container starts — then immediately crashes. ' +
           'Kubernetes restarts it, it crashes again, restarts again... each time waiting longer between attempts ' +
           '(10s, 20s, 40s, up to 5 minutes). The pod cycles between Running and CrashLoopBackOff while the restart count climbs.\n\n' +
-          'These two failures account for the vast majority of "my pod won\'t work" issues. Once you can ' +
+          'OOMKilled: the container exceeds its memory limit. The kernel kills the process immediately — ' +
+          'no graceful shutdown. The pod transitions to Failed. If managed by a controller, it\'s replaced, ' +
+          'but the new pod will OOM again if the limit is too low or the app has a memory leak. ' +
+          'Fix by increasing the memory limit or fixing the leak.\n\n' +
+          'These three failures account for the vast majority of "my pod won\'t work" issues. Once you can ' +
           'recognize and fix them quickly, you\'ve eliminated most Kubernetes debugging pain.',
         diagram:
           '  ImagePullError:\n' +
@@ -62,9 +38,12 @@ export const lessonDebugging: Lesson = {
           '  \n' +
           '  CrashLoopBackOff:\n' +
           '  Pending → Running → Crash → BackOff → Running → Crash → ...\n' +
-          '                    (restart count increases)',
+          '                    (restart count increases)\n' +
+          '  \n' +
+          '  OOMKilled:\n' +
+          '  Running → OOMKilled (kernel kills process) → Failed → replaced',
         keyTakeaway:
-          'ImagePullError = the image can\'t be found (check the name). CrashLoopBackOff = the app starts but crashes (check the logs). These two failures cover 90% of pod issues.',
+          'ImagePullError = image can\'t be found. CrashLoopBackOff = app crashes on start. OOMKilled = app exceeds memory limit. These three cover 90%+ of pod issues.',
       },
       {
         title: 'Events: Your Diagnostic Trail',
@@ -169,116 +148,276 @@ export const lessonDebugging: Lesson = {
         'CrashLoopBackOff means the image pulled successfully but the process exits on startup. A "ModuleNotFoundError" is a Python import error -- the application code references a library not installed in the container image. This is an application/build issue, not a Kubernetes infrastructure problem. The fix is to rebuild the image with the missing dependency. This distinction matters: ImagePullError = Kubernetes cannot fetch the image; CrashLoopBackOff = the image runs but the process crashes.',
     },
   ],
-  podFailureRules: {
-    'nignx:2.0': 'ImagePullError',
-    'crash-app:1.0': 'CrashLoopBackOff',
-  },
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
-
-    const pods = Array.from({ length: 3 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-app-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web-app', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-app-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image },
-      status: { phase: 'Running' as const },
-    }));
-
-    return {
-      deployments: [
-        {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'web-app',
-            uid: depUid,
-            labels: { app: 'web-app' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web-app' },
-            template: {
-              labels: { app: 'web-app' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 3,
-            updatedReplicas: 3,
-            readyReplicas: 3,
-            availableReplicas: 3,
-            conditions: [{ type: 'Available', status: 'True' }],
-          },
-        },
-      ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
-          metadata: {
-            name: `web-app-${hash.slice(0, 10)}`,
-            uid: rsUid,
-            labels: { app: 'web-app', 'pod-template-hash': hash },
-            ownerReference: {
-              kind: 'Deployment',
-              name: 'web-app',
-              uid: depUid,
-            },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web-app', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'web-app', 'pod-template-hash': hash },
-              spec: { image },
-            },
-          },
-          status: { replicas: 3, readyReplicas: 3 },
-        },
-      ],
-      pods,
-      nodes: [],
-      services: [],
-      events: [],
-    };
-  },
-  steps: [
+  practices: [
     {
-      id: 'intro-break',
-      trigger: 'onLoad',
-      instruction:
-        'Your app is healthy. Try updating to a typo image: "kubectl set image deployment/web-app nignx:2.0" (note: nignx, not nginx). Then Reconcile.',
+      title: 'Fix an ImagePullError',
+      goalDescription:
+        'Trigger an ImagePullError by deploying a typo\'d image name ("nignx:2.0"), then use events and describe to diagnose and fix it. Final state: all 3 pods Running nginx:2.0.',
+      successMessage:
+        'You diagnosed and fixed an ImagePullError using events and describe. ImagePullError = bad image name or missing tag. Always check the image string first when pods won\'t start.',
+      podFailureRules: { 'nignx:2.0': 'ImagePullError' },
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`web-app-${hash.slice(0, 10)}`), uid: generateUID(),
+            labels: { app: 'web-app', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `web-app-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'web-app', uid: depUid, labels: { app: 'web-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 3, selector: { app: 'web-app' },
+              template: { labels: { app: 'web-app' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 3, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, conditions: [{ type: 'Available', status: 'True' }] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `web-app-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'web-app', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'web-app', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 3, selector: { app: 'web-app', 'pod-template-hash': hash },
+              template: { labels: { app: 'web-app', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 3, readyReplicas: 3 },
+          }],
+          pods, nodes: [], services: [], events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl set image" to fix the image typo',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
+        },
+        {
+          description: 'Trigger an ImagePullError (deploy image "nignx:2.0" — note the typo)',
+          check: (s: ClusterState) => s.pods.some(p => p.status.reason === 'ImagePullError') || s.events.some(e => e.reason === 'Failed' && e.message.includes('ImagePullError')),
+        },
+        {
+          description: 'Fix the ImagePullError and get pods Running',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+            return !!dep && dep.spec.template.spec.image === 'nginx:2.0' && !s.pods.some(p => p.status.reason === 'ImagePullError' && !p.metadata.deletionTimestamp);
+          },
+        },
+        {
+          description: 'All 3 pods Running with image nginx:2.0',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+            if (!dep || dep.spec.template.spec.image !== 'nginx:2.0') return false;
+            const activePods = s.pods.filter(p => !p.metadata.deletionTimestamp && p.status.phase === 'Running' && p.spec.image === 'nginx:2.0' && s.replicaSets.some(rs => rs.metadata.ownerReference?.uid === dep.metadata.uid && rs.metadata.uid === p.metadata.ownerReference?.uid));
+            return activePods.length === 3;
+          },
+        },
+      ],
+      hints: [
+        { text: 'Try setting a deliberately bad image name to see what happens.' },
+        { text: 'kubectl set image deployment/web-app web-app=nignx:2.0', exact: true },
+        { text: 'Use kubectl get events to see the error. Fix the typo in the image name.' },
+        { text: 'kubectl set image deployment/web-app web-app=nginx:2.0', exact: true },
+      ],
+      steps: [{
+        id: 'intro-break',
+        trigger: 'onLoad' as const,
+        instruction: 'Your app is healthy. Try updating to a typo image: "kubectl set image deployment/web-app nignx:2.0" (note: nignx, not nginx). Then Reconcile.',
+      }],
+    },
+    {
+      title: 'Diagnose CrashLoopBackOff',
+      goalDescription:
+        'A deployment has crashing pods. Use logs and events to diagnose, then fix the image.',
+      successMessage:
+        'You diagnosed CrashLoopBackOff using logs and events. When pods keep restarting, always check logs first — the crash reason is usually right there.',
+      podFailureRules: { 'crash-app:1.0': 'CrashLoopBackOff' },
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'crash-app:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`api-backend-${hash.slice(0, 10)}`), uid: generateUID(),
+            labels: { app: 'api-backend', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `api-backend-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 30000,
+          },
+          spec: { image, failureMode: 'CrashLoopBackOff' as const, logs: ['[startup] Container started with image crash-app:1.0', '[fatal] Process exited with code 1', '[error] Back-off restarting failed container'] },
+          status: { phase: 'CrashLoopBackOff' as const, reason: 'CrashLoopBackOff', message: 'Back-off restarting failed container', restartCount: 4 },
+        }));
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'api-backend', uid: depUid, labels: { app: 'api-backend' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 2, selector: { app: 'api-backend' },
+              template: { labels: { app: 'api-backend' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 2, updatedReplicas: 2, readyReplicas: 0, availableReplicas: 0, conditions: [] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `api-backend-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'api-backend', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'api-backend', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 2, selector: { app: 'api-backend', 'pod-template-hash': hash },
+              template: { labels: { app: 'api-backend', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 2, readyReplicas: 0 },
+          }],
+          pods, nodes: [], services: [], events: [{
+            timestamp: Date.now() - 20000, tick: 0, type: 'Warning' as const, reason: 'BackOff',
+            objectKind: 'Pod', objectName: 'api-backend-pod',
+            message: 'Back-off restarting failed container (restart count: 4)',
+          }],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl logs" to read the crash output',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('logs'),
+        },
+        {
+          description: 'Use "kubectl get events" to see failure timeline',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-events'),
+        },
+        {
+          description: 'Use "kubectl set image" to fix the crashing image',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
+        },
+        {
+          description: 'Fix the deployment image to "api:2.0"',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'api-backend');
+            return !!dep && dep.spec.template.spec.image === 'api:2.0';
+          },
+        },
+        {
+          description: '2 pods Running with the fixed image',
+          check: (s: ClusterState) => s.pods.filter(p => p.spec.image === 'api:2.0' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length === 2,
+        },
+      ],
+      hints: [
+        { text: 'Run "kubectl logs <pod-name>" to see what the container printed before crashing.' },
+        { text: 'Run "kubectl get events" to see the BackOff warnings.' },
+        { text: 'The image "crash-app:1.0" is broken. Fix it with set image.' },
+        { text: 'kubectl set image deployment/api-backend api-backend=api:2.0', exact: true },
+      ],
+    },
+    {
+      title: 'Fix a Service with Zero Endpoints',
+      goalDescription:
+        'The "web-svc" Service has 0 endpoints despite 3 Running pods. Diagnose and fix the selector mismatch.',
+      successMessage:
+        'You fixed a zero-endpoint Service by correcting the selector. Always compare the Service selector with actual pod labels when endpoints are missing.',
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'web:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`web-frontend-${hash.slice(0, 10)}`), uid: generateUID(),
+            labels: { app: 'web-frontend', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `web-frontend-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'web-frontend', uid: depUid, labels: { app: 'web-frontend' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 3, selector: { app: 'web-frontend' },
+              template: { labels: { app: 'web-frontend' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 3, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, conditions: [{ type: 'Available', status: 'True' }] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `web-frontend-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'web-frontend', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'web-frontend', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 3, selector: { app: 'web-frontend', 'pod-template-hash': hash },
+              template: { labels: { app: 'web-frontend', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 3, readyReplicas: 3 },
+          }],
+          pods,
+          nodes: [],
+          services: [{
+            kind: 'Service' as const,
+            metadata: { name: 'web-svc', uid: generateUID(), labels: {}, creationTimestamp: Date.now() - 120000 },
+            spec: { selector: { app: 'web-front' }, port: 80 },
+            status: { endpoints: [] },
+          }],
+          events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl describe service" to inspect the selector',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-service'),
+        },
+        {
+          description: 'Use "kubectl patch" to fix the service selector',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('patch'),
+        },
+        {
+          description: 'Fix the selector to app=web-frontend',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
+            return !!svc && svc.spec.selector['app'] === 'web-frontend';
+          },
+        },
+        {
+          description: 'Verify 3 endpoints on the service',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
+            return !!svc && svc.status.endpoints.length === 3;
+          },
+        },
+      ],
+      hints: [
+        { text: 'Run "kubectl describe service web-svc" to see the selector and endpoints.' },
+        { text: 'The selector is app=web-front but the pods have app=web-frontend. It\'s truncated!' },
+        { text: 'kubectl patch service web-svc --selector=app=web-frontend', exact: true },
+      ],
     },
   ],
-  goalCheck: (state) => {
-    const dep = state.deployments.find((d) => d.metadata.name === 'web-app');
-    if (!dep) return false;
-    if (dep.spec.template.spec.image !== 'nginx:2.0') return false;
-
-    const activePods = state.pods.filter(
-      (p) =>
-        !p.metadata.deletionTimestamp &&
-        p.status.phase === 'Running' &&
-        p.spec.image === 'nginx:2.0' &&
-        state.replicaSets.some(
-          (rs) =>
-            rs.metadata.ownerReference?.uid === dep.metadata.uid &&
-            rs.metadata.uid === p.metadata.ownerReference?.uid
-        )
-    );
-    return activePods.length === 3;
-  },
 };

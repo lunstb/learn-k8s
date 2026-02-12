@@ -13,154 +13,6 @@ export const lessonStorage: Lesson = {
   successMessage:
     'The StorageClass triggered dynamic provisioning, the PVC bound to a new PV, and the postgres pod started successfully. ' +
     'In production, StorageClasses abstract away the underlying storage provider (AWS EBS, GCE PD, NFS, etc.) and let PVCs request storage without knowing implementation details.',
-  yamlTemplate: `apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: ???
-provisioner: k8s-simulator/dynamic
-reclaimPolicy: ???`,
-  hints: [
-    { text: 'Run `kubectl get pvc` to see that "postgres-data" is Pending. It needs a StorageClass named "standard".' },
-    { text: 'In the YAML Editor, set the StorageClass name to "standard" and reclaimPolicy to "Delete".' },
-    { text: 'Click Apply (or Ctrl+Enter) to create the StorageClass. The storage controller will dynamically provision a PV and bind the PVC.' },
-    { text: 'After the PVC binds, the pod volume dependency is satisfied and the postgres pod will transition to Running on the next tick.' },
-  ],
-  goals: [
-    {
-      description: 'StorageClass "standard" exists',
-      check: (s: ClusterState) => s.storageClasses.some((sc) => sc.metadata.name === 'standard'),
-    },
-    {
-      description: 'PVC "postgres-data" is Bound',
-      check: (s: ClusterState) => {
-        const pvc = s.persistentVolumeClaims.find((p) => p.metadata.name === 'postgres-data');
-        return !!pvc && pvc.status.phase === 'Bound';
-      },
-    },
-    {
-      description: 'Postgres pod is Running',
-      check: (s: ClusterState) =>
-        s.pods.some((p) => p.metadata.name.startsWith('postgres-') && p.status.phase === 'Running' && !p.metadata.deletionTimestamp),
-    },
-  ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsHash = templateHash({ image: 'postgres:15' });
-    const rsName = `postgres-${rsHash}`;
-    const rsUid = generateUID();
-    const podName = generatePodName(rsName);
-
-    return {
-      nodes: [
-        {
-          kind: 'Node' as const,
-          metadata: { name: 'node-1', uid: generateUID(), labels: { role: 'worker' }, creationTimestamp: Date.now() },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }], allocatedPods: 0 },
-        },
-        {
-          kind: 'Node' as const,
-          metadata: { name: 'node-2', uid: generateUID(), labels: { role: 'worker' }, creationTimestamp: Date.now() },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }], allocatedPods: 0 },
-        },
-      ],
-      deployments: [
-        {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'postgres',
-            uid: depUid,
-            labels: { app: 'postgres' },
-            creationTimestamp: Date.now(),
-          },
-          spec: {
-            replicas: 1,
-            selector: { app: 'postgres' },
-            template: {
-              labels: { app: 'postgres' },
-              spec: {
-                image: 'postgres:15',
-                volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'postgres-data' } }],
-              },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: { replicas: 1, updatedReplicas: 1, readyReplicas: 0, availableReplicas: 0, conditions: [] },
-        },
-      ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
-          metadata: {
-            name: rsName,
-            uid: rsUid,
-            labels: { app: 'postgres' },
-            ownerReference: { kind: 'Deployment', name: 'postgres', uid: depUid },
-            creationTimestamp: Date.now(),
-          },
-          spec: {
-            replicas: 1,
-            selector: { app: 'postgres' },
-            template: {
-              labels: { app: 'postgres' },
-              spec: {
-                image: 'postgres:15',
-                volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'postgres-data' } }],
-              },
-            },
-          },
-          status: { replicas: 1, readyReplicas: 0 },
-        },
-      ],
-      pods: [
-        {
-          kind: 'Pod' as const,
-          metadata: {
-            name: podName,
-            uid: generateUID(),
-            labels: { app: 'postgres' },
-            ownerReference: { kind: 'ReplicaSet', name: rsName, uid: rsUid },
-            creationTimestamp: Date.now(),
-          },
-          spec: {
-            image: 'postgres:15',
-            volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'postgres-data' } }],
-          },
-          status: {
-            phase: 'Pending',
-            tickCreated: 0,
-            reason: 'Pending',
-            message: 'persistentvolumeclaim "postgres-data" not bound',
-          },
-        },
-      ],
-      services: [],
-      events: [],
-      persistentVolumeClaims: [
-        {
-          kind: 'PersistentVolumeClaim' as const,
-          metadata: { name: 'postgres-data', uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
-          spec: {
-            accessModes: ['ReadWriteOnce'],
-            resources: { requests: { storage: '1Gi' } },
-            storageClassName: 'standard',
-          },
-          status: { phase: 'Pending' as const },
-        },
-      ],
-      storageClasses: [],
-      persistentVolumes: [],
-    };
-  },
-  goalCheck: (state: ClusterState) => {
-    const scExists = state.storageClasses.some((sc) => sc.metadata.name === 'standard');
-    const pvcBound = state.persistentVolumeClaims.find((p) => p.metadata.name === 'postgres-data')?.status.phase === 'Bound';
-    const podRunning = state.pods.some(
-      (p) => p.metadata.name.startsWith('postgres-') && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
-    );
-    return scExists && pvcBound && podRunning;
-  },
   lecture: {
     sections: [
       {
@@ -300,6 +152,168 @@ reclaimPolicy: ???`,
         'The Delete reclaim policy is destructive: when the PVC is deleted, the PV and its backing storage (EBS volume, GCE PD, etc.) are also deleted. ' +
         'There is no undo, grace period, or soft-delete. This is why Retain is recommended for production databases — it preserves the PV and data after PVC deletion, ' +
         'allowing manual recovery. For critical data, always use Retain reclaim policy AND maintain external backups (e.g., volume snapshots).',
+    },
+  ],
+  practices: [
+    {
+      title: 'Fix an Unbound PVC',
+      goalDescription:
+        'A postgres Deployment is stuck Pending because its PVC "postgres-data" cannot bind — no StorageClass exists. Create a StorageClass named "standard" via the YAML Editor so the PVC binds dynamically, and the pod transitions to Running.',
+      successMessage:
+        'The StorageClass triggered dynamic provisioning, the PVC bound to a new PV, and the postgres pod started successfully. ' +
+        'In production, StorageClasses abstract away the underlying storage provider (AWS EBS, GCE PD, NFS, etc.) and let PVCs request storage without knowing implementation details.',
+      yamlTemplate: `apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ???
+provisioner: k8s-simulator/dynamic
+reclaimPolicy: ???`,
+      hints: [
+        { text: 'Run `kubectl get pvc` to see that "postgres-data" is Pending. It needs a StorageClass named "standard".' },
+        { text: 'In the YAML Editor, set the StorageClass name to "standard" and reclaimPolicy to "Delete".' },
+        { text: 'Click Apply (or Ctrl+Enter) to create the StorageClass. The storage controller will dynamically provision a PV and bind the PVC.' },
+        { text: 'After the PVC binds, the pod volume dependency is satisfied and the postgres pod will transition to Running on the next tick.' },
+      ],
+      goals: [
+        {
+          description: 'Use "kubectl apply" to create the StorageClass via YAML',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'StorageClass "standard" exists',
+          check: (s: ClusterState) => s.storageClasses.some((sc) => sc.metadata.name === 'standard'),
+        },
+        {
+          description: 'PVC "postgres-data" is Bound',
+          check: (s: ClusterState) => {
+            const pvc = s.persistentVolumeClaims.find((p) => p.metadata.name === 'postgres-data');
+            return !!pvc && pvc.status.phase === 'Bound';
+          },
+        },
+        {
+          description: 'Postgres pod is Running',
+          check: (s: ClusterState) =>
+            s.pods.some((p) => p.metadata.name.startsWith('postgres-') && p.status.phase === 'Running' && !p.metadata.deletionTimestamp),
+        },
+      ],
+      initialState: () => {
+        const depUid = generateUID();
+        const rsHash = templateHash({ image: 'postgres:15' });
+        const rsName = `postgres-${rsHash}`;
+        const rsUid = generateUID();
+        const podName = generatePodName(rsName);
+
+        return {
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { role: 'worker' }, creationTimestamp: Date.now() },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }], allocatedPods: 0 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-2', uid: generateUID(), labels: { role: 'worker' }, creationTimestamp: Date.now() },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }], allocatedPods: 0 },
+            },
+          ],
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'postgres',
+                uid: depUid,
+                labels: { app: 'postgres' },
+                creationTimestamp: Date.now(),
+              },
+              spec: {
+                replicas: 1,
+                selector: { app: 'postgres' },
+                template: {
+                  labels: { app: 'postgres' },
+                  spec: {
+                    image: 'postgres:15',
+                    volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'postgres-data' } }],
+                  },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: { replicas: 1, updatedReplicas: 1, readyReplicas: 0, availableReplicas: 0, conditions: [] },
+            },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: rsName,
+                uid: rsUid,
+                labels: { app: 'postgres' },
+                ownerReference: { kind: 'Deployment', name: 'postgres', uid: depUid },
+                creationTimestamp: Date.now(),
+              },
+              spec: {
+                replicas: 1,
+                selector: { app: 'postgres' },
+                template: {
+                  labels: { app: 'postgres' },
+                  spec: {
+                    image: 'postgres:15',
+                    volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'postgres-data' } }],
+                  },
+                },
+              },
+              status: { replicas: 1, readyReplicas: 0 },
+            },
+          ],
+          pods: [
+            {
+              kind: 'Pod' as const,
+              metadata: {
+                name: podName,
+                uid: generateUID(),
+                labels: { app: 'postgres' },
+                ownerReference: { kind: 'ReplicaSet', name: rsName, uid: rsUid },
+                creationTimestamp: Date.now(),
+              },
+              spec: {
+                image: 'postgres:15',
+                volumes: [{ name: 'data', persistentVolumeClaim: { claimName: 'postgres-data' } }],
+              },
+              status: {
+                phase: 'Pending',
+                tickCreated: 0,
+                reason: 'Pending',
+                message: 'persistentvolumeclaim "postgres-data" not bound',
+              },
+            },
+          ],
+          services: [],
+          events: [],
+          persistentVolumeClaims: [
+            {
+              kind: 'PersistentVolumeClaim' as const,
+              metadata: { name: 'postgres-data', uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
+              spec: {
+                accessModes: ['ReadWriteOnce'],
+                resources: { requests: { storage: '1Gi' } },
+                storageClassName: 'standard',
+              },
+              status: { phase: 'Pending' as const },
+            },
+          ],
+          storageClasses: [],
+          persistentVolumes: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        const scExists = state.storageClasses.some((sc) => sc.metadata.name === 'standard');
+        const pvcBound = state.persistentVolumeClaims.find((p) => p.metadata.name === 'postgres-data')?.status.phase === 'Bound';
+        const podRunning = state.pods.some(
+          (p) => p.metadata.name.startsWith('postgres-') && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+        );
+        return scExists && pvcBound && podRunning;
+      },
     },
   ],
 };

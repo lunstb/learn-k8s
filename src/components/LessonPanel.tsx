@@ -3,7 +3,7 @@ import { useSimulatorStore } from '../simulation/store';
 import type { LessonPhase } from '../simulation/store';
 import { curriculum, lessonDisplayNumber } from '../lessons';
 import type { CurriculumSection } from '../lessons';
-import type { LessonGoal } from '../lessons/types';
+import type { LessonGoal, PracticeExercise } from '../lessons/types';
 
 const fullPhases: { key: LessonPhase; label: string }[] = [
   { key: 'lecture', label: 'Learn' },
@@ -26,6 +26,9 @@ export function LessonPanel() {
   const cluster = useSimulatorStore((s) => s.cluster);
   const hintIndex = useSimulatorStore((s) => s.hintIndex);
   const revealNextHint = useSimulatorStore((s) => s.revealNextHint);
+  const currentExerciseIndex = useSimulatorStore((s) => s.currentExerciseIndex);
+  const exerciseCompleted = useSimulatorStore((s) => s.exerciseCompleted);
+  const startNextExercise = useSimulatorStore((s) => s.startNextExercise);
 
   // Track which sections are expanded
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => {
@@ -111,15 +114,61 @@ export function LessonPanel() {
           <h3>{currentLesson.title}</h3>
           <p className="lesson-description">{currentLesson.description}</p>
 
-          {lessonPhase === 'practice' && (
-            <GoalsChecklist
-              lesson={currentLesson}
-              cluster={cluster}
-              hintIndex={hintIndex}
-              onRevealHint={revealNextHint}
-              lessonCompleted={lessonCompleted}
-            />
-          )}
+          {lessonPhase === 'practice' && (() => {
+            const totalExercises = currentLesson.practices?.length ?? 1;
+            const activeExercise: PracticeExercise | null = currentLesson.practices
+              ? (currentLesson.practices[currentExerciseIndex] ?? null)
+              : (currentLesson.initialState ? {
+                  title: '',
+                  goalDescription: currentLesson.goalDescription,
+                  successMessage: currentLesson.successMessage,
+                  initialState: currentLesson.initialState,
+                  goals: currentLesson.goals,
+                  goalCheck: currentLesson.goalCheck,
+                  hints: currentLesson.hints,
+                  yamlTemplate: currentLesson.yamlTemplate,
+                  podFailureRules: currentLesson.podFailureRules,
+                  afterTick: currentLesson.afterTick,
+                  steps: currentLesson.steps,
+                } : null);
+
+            return (
+              <>
+                {totalExercises > 1 && (
+                  <div className="exercise-progress">
+                    <span className="exercise-progress-label">
+                      Exercise {currentExerciseIndex + 1} of {totalExercises}
+                    </span>
+                    <div className="exercise-dots">
+                      {Array.from({ length: totalExercises }, (_, i) => (
+                        <span
+                          key={i}
+                          className={`exercise-dot${i < currentExerciseIndex ? ' completed' : ''}${i === currentExerciseIndex ? ' active' : ''}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {totalExercises > 1 && activeExercise?.title && (
+                  <div className="exercise-title">{activeExercise.title}</div>
+                )}
+                <GoalsChecklist
+                  lesson={currentLesson}
+                  activeExercise={activeExercise}
+                  cluster={cluster}
+                  hintIndex={hintIndex}
+                  onRevealHint={revealNextHint}
+                  lessonCompleted={lessonCompleted}
+                  exerciseCompleted={exerciseCompleted}
+                />
+                {exerciseCompleted && !lessonCompleted && (
+                  <button className="btn-next-exercise" onClick={startNextExercise}>
+                    Next Exercise →
+                  </button>
+                )}
+              </>
+            );
+          })()}
           {completedLessonIds.includes(currentLesson.id) && lessonPhase !== 'practice' && (
             <div className="lesson-success lesson-success-compact">
               Completed &#10003;
@@ -127,7 +176,9 @@ export function LessonPanel() {
           )}
           {lessonCompleted && lessonPhase === 'practice' && (
             <div className="lesson-success">
-              {currentLesson.successMessage}
+              {(currentLesson.practices
+                ? currentLesson.practices[currentExerciseIndex]?.successMessage
+                : currentLesson.successMessage) ?? currentLesson.successMessage}
             </div>
           )}
         </div>
@@ -146,30 +197,46 @@ export function LessonPanel() {
 
 function GoalsChecklist({
   lesson,
+  activeExercise,
   cluster,
   hintIndex,
   onRevealHint,
   lessonCompleted,
+  exerciseCompleted,
 }: {
   lesson: NonNullable<ReturnType<typeof useSimulatorStore.getState>['currentLesson']>;
+  activeExercise: PracticeExercise | null;
   cluster: ReturnType<typeof useSimulatorStore.getState>['cluster'];
   hintIndex: number;
   onRevealHint: () => void;
   lessonCompleted: boolean;
+  exerciseCompleted: boolean;
 }) {
-  // Build goals list: use lesson.goals if defined, else fall back to goalDescription + goalCheck
+  const completedGoalIndices = useSimulatorStore((s) => s.completedGoalIndices);
+
+  // Build goals list: use active exercise goals if available, else lesson-level
   const goals: LessonGoal[] = useMemo(() => {
+    const exerciseGoals = activeExercise?.goals;
+    const exerciseGoalCheck = activeExercise?.goalCheck;
+    const exerciseGoalDesc = activeExercise?.goalDescription;
+
+    if (exerciseGoals && exerciseGoals.length > 0) return exerciseGoals;
+    if (exerciseGoalCheck && exerciseGoalDesc) {
+      return [{ description: exerciseGoalDesc, check: exerciseGoalCheck }];
+    }
     if (lesson.goals && lesson.goals.length > 0) return lesson.goals;
     if (lesson.goalCheck) {
       return [{ description: lesson.goalDescription, check: lesson.goalCheck }];
     }
     return [{ description: lesson.goalDescription, check: () => false }];
-  }, [lesson]);
+  }, [lesson, activeExercise]);
 
-  const completedCount = goals.filter((g) => g.check(cluster)).length;
+  const hints = activeExercise?.hints ?? lesson.hints;
+  const completedCount = goals.filter((_, i) => completedGoalIndices.includes(i)).length;
   const totalCount = goals.length;
-  const totalHints = lesson.hints?.length ?? 0;
+  const totalHints = hints?.length ?? 0;
   const allHintsRevealed = hintIndex >= totalHints;
+  const isDone = lessonCompleted || exerciseCompleted;
 
   return (
     <div className="goals-checklist">
@@ -179,7 +246,7 @@ function GoalsChecklist({
       </div>
       <div className="goals-list">
         {goals.map((goal, i) => {
-          const done = goal.check(cluster);
+          const done = completedGoalIndices.includes(i);
           return (
             <div key={i} className={`goal-item ${done ? 'completed' : ''}`}>
               <span className="goal-icon">{done ? '\u2705' : '\u25CB'}</span>
@@ -188,7 +255,7 @@ function GoalsChecklist({
           );
         })}
       </div>
-      {totalHints > 0 && !lessonCompleted && (
+      {totalHints > 0 && !isDone && (
         <button
           className={`hint-btn ${allHintsRevealed ? 'exhausted' : ''}`}
           onClick={onRevealHint}

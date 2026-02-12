@@ -35,7 +35,7 @@ import { reconcileCronJobs } from './controllers/cronjob';
 import { reconcileHPAs } from './controllers/hpa';
 import { reconcileStorage } from './controllers/storage';
 import { lessonDisplayNumber } from '../lessons/curriculum';
-import type { Lesson } from '../lessons/types';
+import type { Lesson, PracticeExercise } from '../lessons/types';
 
 export type LessonPhase = 'lecture' | 'quiz' | 'practice';
 
@@ -61,6 +61,13 @@ export interface SimulatorStore {
   // Hint state
   hintIndex: number;
   practiceInitialized: boolean;
+
+  // Exercise state (multi-exercise per lesson)
+  currentExerciseIndex: number;
+  exerciseCompleted: boolean;
+
+  // Goal tracking (latched: once achieved, stays achieved; sequential: requires prior goals)
+  completedGoalIndices: number[];
 
   // Prediction state
   currentStep: number;
@@ -149,6 +156,7 @@ export interface SimulatorStore {
   submitQuizAnswer: (choiceIndex: number) => void;
   nextQuizQuestion: () => void;
   startPractice: () => void;
+  startNextExercise: () => void;
   goToPhase: (phase: LessonPhase) => void;
   revealNextHint: () => void;
 
@@ -209,6 +217,27 @@ const initialClusterState: ClusterState = {
   tick: 0,
 };
 
+function getActiveExercise(lesson: Lesson, index: number): PracticeExercise | null {
+  if (lesson.practices && lesson.practices.length > 0) {
+    return lesson.practices[index] ?? null;
+  }
+  // Synthesize from top-level fields
+  if (!lesson.initialState) return null;
+  return {
+    title: '',
+    goalDescription: lesson.goalDescription,
+    successMessage: lesson.successMessage,
+    initialState: lesson.initialState,
+    goals: lesson.goals,
+    goalCheck: lesson.goalCheck,
+    hints: lesson.hints,
+    yamlTemplate: lesson.yamlTemplate,
+    podFailureRules: lesson.podFailureRules,
+    afterTick: lesson.afterTick,
+    steps: lesson.steps,
+  };
+}
+
 export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   cluster: { ...initialClusterState },
   actions: [],
@@ -224,6 +253,9 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   quizRevealed: false,
   hintIndex: 0,
   practiceInitialized: false,
+  currentExerciseIndex: 0,
+  exerciseCompleted: false,
+  completedGoalIndices: [],
   currentStep: 0,
   predictionPending: false,
   predictionResult: null,
@@ -682,7 +714,8 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     allEvents.push(...schedulerResult.events);
 
     // Pod Lifecycle Controller: handle Pending→Running transitions and failure modes
-    const podLifecycleEvents = runPodLifecycle(cluster, lesson);
+    const activeExercise = lesson ? getActiveExercise(lesson, state.currentExerciseIndex) : null;
+    const podLifecycleEvents = runPodLifecycle(cluster, lesson, activeExercise);
     allEvents.push(...podLifecycleEvents);
 
     // Node Lifecycle Controller: evict pods from NotReady nodes
@@ -699,9 +732,10 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     allActions.push(...endpointsResult.actions);
     allEvents.push(...endpointsResult.events);
 
-    // Lesson afterTick hook
-    if (lesson?.afterTick) {
-      const mutated = lesson.afterTick(cluster.tick + 1, cluster);
+    // Exercise afterTick hook (from active exercise, falls back to lesson)
+    const afterTickFn = activeExercise?.afterTick ?? lesson?.afterTick;
+    if (afterTickFn) {
+      const mutated = afterTickFn(cluster.tick + 1, cluster);
       if (mutated) {
         cluster.pods = mutated.pods;
         cluster.replicaSets = mutated.replicaSets;
@@ -821,41 +855,121 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       predictionPending: false,
       predictionResult: null,
       practiceInitialized: false,
+      currentExerciseIndex: 0,
+      exerciseCompleted: false,
+      completedGoalIndices: [],
       yamlEditorContent: '',
       activeBottomTab: 'terminal',
     });
   },
 
   checkGoal: () => {
-    const { currentLesson, cluster, lessonCompleted, currentStep } = get();
-    if (!currentLesson || lessonCompleted) return;
-    if (!currentLesson.goalCheck) return;
+    const { currentLesson, cluster, lessonCompleted, currentStep, completedGoalIndices, exerciseCompleted, currentExerciseIndex } = get();
+    if (!currentLesson || lessonCompleted || exerciseCompleted) return;
 
-    // Check step-level goalCheck
-    if (currentLesson.steps) {
-      const step = currentLesson.steps[currentStep];
+    const activeExercise = getActiveExercise(currentLesson, currentExerciseIndex);
+
+    // Check step-level goalCheck (from active exercise or lesson)
+    const steps = activeExercise?.steps ?? currentLesson.steps;
+    if (steps) {
+      const step = steps[currentStep];
       if (step?.goalCheck?.(cluster) && !get().predictionPending) {
         get().advanceStep();
       }
     }
 
-    // Check overall lesson goal
-    if (currentLesson.goalCheck(cluster)) {
-      const { completedLessonIds } = get();
-      const newCompleted = completedLessonIds.includes(currentLesson.id)
-        ? completedLessonIds
-        : [...completedLessonIds, currentLesson.id];
-      saveCompletedLessons(newCompleted);
-      set((s) => ({
-        lessonCompleted: true,
-        completedLessonIds: newCompleted,
-        terminalOutput: [
-          ...s.terminalOutput,
-          '',
-          `\u2705 ${currentLesson.successMessage}`,
-          '',
-        ],
-      }));
+    // Use goals from active exercise if available, else from lesson
+    const goals = activeExercise?.goals ?? currentLesson.goals;
+    const goalCheck = activeExercise?.goalCheck ?? currentLesson.goalCheck;
+    const successMessage = activeExercise?.successMessage ?? currentLesson.successMessage;
+
+    // Determine total exercises count
+    const totalExercises = currentLesson.practices?.length ?? 1;
+    const isLastExercise = currentExerciseIndex >= totalExercises - 1;
+
+    // Update individual goal progress (latched + sequential)
+    if (goals && goals.length > 0) {
+      const newCompleted = [...completedGoalIndices];
+      for (let i = 0; i < goals.length; i++) {
+        if (newCompleted.includes(i)) continue; // already latched
+        // Sequential: all prior goals must be latched first
+        const allPriorDone = Array.from({ length: i }, (_, j) => j).every(j => newCompleted.includes(j));
+        if (!allPriorDone) break; // can't skip ahead
+        if (goals[i].check(cluster)) {
+          newCompleted.push(i);
+        }
+      }
+      if (newCompleted.length !== completedGoalIndices.length) {
+        set({ completedGoalIndices: newCompleted });
+      }
+
+      // All exercise goals latched
+      if (newCompleted.length === goals.length) {
+        if (isLastExercise) {
+          // Last exercise: mark lesson complete
+          const { completedLessonIds } = get();
+          const newLessonCompleted = completedLessonIds.includes(currentLesson.id)
+            ? completedLessonIds
+            : [...completedLessonIds, currentLesson.id];
+          saveCompletedLessons(newLessonCompleted);
+          set((s) => ({
+            lessonCompleted: true,
+            completedLessonIds: newLessonCompleted,
+            terminalOutput: [
+              ...s.terminalOutput,
+              '',
+              `\u2705 ${successMessage}`,
+              '',
+            ],
+          }));
+        } else {
+          // More exercises remain: mark exercise completed
+          set((s) => ({
+            exerciseCompleted: true,
+            terminalOutput: [
+              ...s.terminalOutput,
+              '',
+              `\u2705 ${successMessage}`,
+              '',
+            ],
+          }));
+        }
+      }
+      return;
+    }
+
+    // Fallback: lessons/exercises without individual goals use goalCheck directly
+    if (!goalCheck) return;
+    if (goalCheck(cluster)) {
+      if (isLastExercise) {
+        const { completedLessonIds } = get();
+        const newCompleted = completedLessonIds.includes(currentLesson.id)
+          ? completedLessonIds
+          : [...completedLessonIds, currentLesson.id];
+        saveCompletedLessons(newCompleted);
+        set((s) => ({
+          lessonCompleted: true,
+          completedGoalIndices: [0],
+          completedLessonIds: newCompleted,
+          terminalOutput: [
+            ...s.terminalOutput,
+            '',
+            `\u2705 ${successMessage}`,
+            '',
+          ],
+        }));
+      } else {
+        set((s) => ({
+          exerciseCompleted: true,
+          completedGoalIndices: [0],
+          terminalOutput: [
+            ...s.terminalOutput,
+            '',
+            `\u2705 ${successMessage}`,
+            '',
+          ],
+        }));
+      }
     }
   },
 
@@ -915,39 +1029,45 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   },
 
   startPractice: () => {
-    const { currentLesson } = get();
+    const { currentLesson, currentExerciseIndex } = get();
     if (!currentLesson) return;
-    if (!currentLesson.initialState) return;
 
-    const state = currentLesson.initialState();
+    const exercise = getActiveExercise(currentLesson, currentExerciseIndex);
+    if (!exercise) return;
+
+    const initState = exercise.initialState();
     const cluster: ClusterState = {
-      pods: state.pods || [],
-      replicaSets: state.replicaSets || [],
-      deployments: state.deployments || [],
-      nodes: state.nodes || [],
-      services: state.services || [],
-      events: state.events || [],
-      namespaces: state.namespaces || [],
-      configMaps: state.configMaps || [],
-      secrets: state.secrets || [],
-      ingresses: state.ingresses || [],
-      statefulSets: state.statefulSets || [],
-      daemonSets: state.daemonSets || [],
-      jobs: state.jobs || [],
-      cronJobs: state.cronJobs || [],
-      hpas: state.hpas || [],
-      storageClasses: state.storageClasses || [],
-      persistentVolumes: state.persistentVolumes || [],
-      persistentVolumeClaims: state.persistentVolumeClaims || [],
-      podDisruptionBudgets: state.podDisruptionBudgets || [],
-      helmReleases: state.helmReleases || [],
+      pods: initState.pods || [],
+      replicaSets: initState.replicaSets || [],
+      deployments: initState.deployments || [],
+      nodes: initState.nodes || [],
+      services: initState.services || [],
+      events: initState.events || [],
+      namespaces: initState.namespaces || [],
+      configMaps: initState.configMaps || [],
+      secrets: initState.secrets || [],
+      ingresses: initState.ingresses || [],
+      statefulSets: initState.statefulSets || [],
+      daemonSets: initState.daemonSets || [],
+      jobs: initState.jobs || [],
+      cronJobs: initState.cronJobs || [],
+      hpas: initState.hpas || [],
+      storageClasses: initState.storageClasses || [],
+      persistentVolumes: initState.persistentVolumes || [],
+      persistentVolumeClaims: initState.persistentVolumeClaims || [],
+      podDisruptionBudgets: initState.podDisruptionBudgets || [],
+      helmReleases: initState.helmReleases || [],
+      _commandsUsed: [],
       tick: 0,
     };
 
+    const totalExercises = currentLesson.practices?.length ?? 1;
+    const exerciseLabel = totalExercises > 1 ? ` (Exercise ${currentExerciseIndex + 1} of ${totalExercises})` : '';
+
     const terminalOutput = [
-      `--- Lesson ${lessonDisplayNumber[currentLesson.id] ?? currentLesson.id}: ${currentLesson.title} (Practice) ---`,
+      `--- Lesson ${lessonDisplayNumber[currentLesson.id] ?? currentLesson.id}: ${currentLesson.title} (Practice)${exerciseLabel} ---`,
       '',
-      `Goal: ${currentLesson.goalDescription}`,
+      `Goal: ${exercise.goalDescription}`,
       '',
       'Type "hint" for a hint if you get stuck.',
       '',
@@ -955,8 +1075,9 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
 
     // Show first step instruction if it triggers onLoad
     let predictionPending = false;
-    if (currentLesson.steps && currentLesson.steps.length > 0) {
-      const firstStep = currentLesson.steps[0];
+    const steps = exercise.steps;
+    if (steps && steps.length > 0) {
+      const firstStep = steps[0];
       if (firstStep.trigger === 'onLoad') {
         if (firstStep.instruction) {
           terminalOutput.push(firstStep.instruction, '');
@@ -970,7 +1091,9 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
     set({
       lessonPhase: 'practice',
       lessonCompleted: false,
+      exerciseCompleted: false,
       practiceInitialized: true,
+      completedGoalIndices: [],
       cluster,
       actions: [],
       terminalOutput,
@@ -979,9 +1102,18 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
       hintIndex: 0,
       predictionPending,
       predictionResult: null,
-      yamlEditorContent: currentLesson.yamlTemplate || '',
-      activeBottomTab: currentLesson.yamlTemplate ? 'yaml' : 'terminal',
+      yamlEditorContent: exercise.yamlTemplate || '',
+      activeBottomTab: exercise.yamlTemplate ? 'yaml' : 'terminal',
     });
+  },
+
+  startNextExercise: () => {
+    const { currentLesson, currentExerciseIndex } = get();
+    if (!currentLesson) return;
+
+    const nextIndex = currentExerciseIndex + 1;
+    set({ currentExerciseIndex: nextIndex, exerciseCompleted: false });
+    get().startPractice();
   },
 
   goToPhase: (phase) => {
@@ -1009,20 +1141,23 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   },
 
   revealNextHint: () => {
-    const { currentLesson, hintIndex } = get();
-    if (!currentLesson?.hints || currentLesson.hints.length === 0) {
+    const { currentLesson, hintIndex, currentExerciseIndex } = get();
+    if (!currentLesson) return;
+    const exercise = getActiveExercise(currentLesson, currentExerciseIndex);
+    const hints = exercise?.hints ?? currentLesson.hints;
+    if (!hints || hints.length === 0) {
       set((s) => ({
         terminalOutput: [...s.terminalOutput, 'No hints available for this lesson.', ''],
       }));
       return;
     }
-    if (hintIndex >= currentLesson.hints.length) {
+    if (hintIndex >= hints.length) {
       set((s) => ({
         terminalOutput: [...s.terminalOutput, 'No more hints available.', ''],
       }));
       return;
     }
-    const hint = currentLesson.hints[hintIndex];
+    const hint = hints[hintIndex];
     const prefix = hint.exact ? 'Hint: ' : 'Hint: ';
     const formatted = hint.exact ? `${prefix}\`${hint.text}\`` : `${prefix}${hint.text}`;
     set((s) => ({
@@ -1087,16 +1222,17 @@ export const useSimulatorStore = create<SimulatorStore>((set, get) => ({
   },
 }));
 
-function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null): SimEvent[] {
+function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null, activeExercise?: PracticeExercise | null): SimEvent[] {
   const events: SimEvent[] = [];
   const currentTick = cluster.tick;
+  const failureRules = activeExercise?.podFailureRules ?? lesson?.podFailureRules;
 
   for (const pod of cluster.pods) {
     if (pod.metadata.deletionTimestamp) continue;
 
-    // Apply lesson failure rules to newly created pods
-    if (lesson?.podFailureRules && pod.status.phase === 'Pending' && !pod.spec.failureMode) {
-      const failure = lesson.podFailureRules[pod.spec.image];
+    // Apply lesson/exercise failure rules to newly created pods
+    if (failureRules && pod.status.phase === 'Pending' && !pod.spec.failureMode) {
+      const failure = failureRules[pod.spec.image];
       if (failure) {
         pod.spec.failureMode = failure;
       }

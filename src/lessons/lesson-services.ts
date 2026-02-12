@@ -9,50 +9,11 @@ export const lessonServices: Lesson = {
     'Services provide a stable address for ephemeral pods, routing traffic only to healthy endpoints.',
   mode: 'full',
   goalDescription:
-    'Create a Service named "web-svc" with selector app=web-app on port 80, scale the "web-app" Deployment to 5 replicas, and verify all 5 endpoints are active.',
+    'Create a Service named "web-svc" with selector app=web-app on the correct port (hint: check the pod logs to discover it), scale the "web-app" Deployment to 5 replicas, and verify all 5 endpoints are active.',
   successMessage:
-    'Services dynamically track endpoints. When you scale up, new Running pods automatically become endpoints. ' +
-    'Pending pods are excluded — only Running pods matching the selector serve traffic.',
-  yamlTemplate: `apiVersion: v1
-kind: Service
-metadata:
-  name: ???
-spec:
-  selector:
-    app: ???
-  ports:
-  - port: ???
-    targetPort: ???`,
-  hints: [
-    { text: 'Switch to the YAML Editor tab — fill in the ??? fields: name should be "web-svc", selector app should match "web-app", and port should be 80.' },
-    { text: 'Or use the terminal: kubectl create service web-svc --selector=app=web-app --port=80', exact: false },
-    { text: 'After the service exists, scale the deployment up.' },
-    { text: 'kubectl scale deployment web-app --replicas=5', exact: true },
-    { text: 'Use kubectl get endpoints to verify all 5 pods are registered.' },
-  ],
-  goals: [
-    {
-      description: 'Create a Service named "web-svc" targeting app=web-app on port 80',
-      check: (s: ClusterState) => {
-        const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
-        return !!svc && svc.spec.selector['app'] === 'web-app' && svc.spec.port === 80;
-      },
-    },
-    {
-      description: 'Scale the "web-app" Deployment to 5 replicas',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'web-app');
-        return !!dep && dep.spec.replicas === 5;
-      },
-    },
-    {
-      description: 'Verify the service has 5 endpoints',
-      check: (s: ClusterState) => {
-        const svc = s.services.find(svc => svc.spec.selector['app'] === 'web-app');
-        return !!svc && svc.status.endpoints.length === 5;
-      },
-    },
-  ],
+    'You discovered the port from the pod logs and wired the Service correctly. ' +
+    'In real clusters, always check what port your containers actually listen on — never assume. ' +
+    'Services dynamically track endpoints: when you scale up, new Running pods automatically become endpoints.',
   lecture: {
     sections: [
       {
@@ -234,96 +195,206 @@ spec:
         'This is the mechanism behind zero-downtime rolling updates — traffic only shifts to new pods after they prove they can handle it.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
+  practices: [
+    {
+      title: 'Wire a Service to Pods',
+      goalDescription:
+        'Create a Service named "web-svc" with selector app=web-app on the correct port (hint: check the pod logs to discover it), scale the "web-app" Deployment to 5 replicas, and verify all 5 endpoints are active.',
+      successMessage:
+        'You discovered the port from the pod logs and wired the Service correctly. ' +
+        'In real clusters, always check what port your containers actually listen on — never assume. ' +
+        'Services dynamically track endpoints: when you scale up, new Running pods automatically become endpoints.',
+      yamlTemplate: `apiVersion: v1
+kind: Service
+metadata:
+  name: ???
+spec:
+  selector:
+    app: ???
+  ports:
+  - port: ???
+    targetPort: ???`,
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
 
-    const pods = Array.from({ length: 3 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-app-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web-app', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-app-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image },
-      status: { phase: 'Running' as const },
-    }));
-
-    return {
-      deployments: [
-        {
-          kind: 'Deployment' as const,
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: 'web-app',
-            uid: depUid,
-            labels: { app: 'web-app' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web-app' },
-            template: {
-              labels: { app: 'web-app' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 3,
-            updatedReplicas: 3,
-            readyReplicas: 3,
-            availableReplicas: 3,
-            conditions: [{ type: 'Available', status: 'True' }],
-          },
-        },
-      ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
-          metadata: {
-            name: `web-app-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name: generatePodName(`web-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'web-app', 'pod-template-hash': hash },
-            ownerReference: {
-              kind: 'Deployment',
-              name: 'web-app',
-              uid: depUid,
-            },
-            creationTimestamp: Date.now() - 120000,
+            ownerReference: { kind: 'ReplicaSet', name: `web-app-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web-app', 'pod-template-hash': hash },
-            template: {
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'web-app', uid: depUid, labels: { app: 'web-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 3, selector: { app: 'web-app' },
+              template: { labels: { app: 'web-app' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 3, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, conditions: [{ type: 'Available', status: 'True' }] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `web-app-${hash.slice(0, 10)}`, uid: rsUid,
               labels: { app: 'web-app', 'pod-template-hash': hash },
-              spec: { image },
+              ownerReference: { kind: 'Deployment', name: 'web-app', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
             },
+            spec: {
+              replicas: 3, selector: { app: 'web-app', 'pod-template-hash': hash },
+              template: { labels: { app: 'web-app', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 3, readyReplicas: 3 },
+          }],
+          pods,
+          nodes: [],
+          services: [],
+          events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl scale" to scale the deployment to 5 replicas',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('scale'),
+        },
+        {
+          description: 'Create a Service named "web-svc" targeting app=web-app on the correct port',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'web-svc');
+            return !!svc && svc.spec.selector['app'] === 'web-app' && svc.spec.port === 8080;
           },
-          status: { replicas: 3, readyReplicas: 3 },
+        },
+        {
+          description: 'Scale the "web-app" Deployment to 5 replicas',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+            return !!dep && dep.spec.replicas === 5;
+          },
+        },
+        {
+          description: 'Verify the service has 5 endpoints',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.spec.selector['app'] === 'web-app');
+            return !!svc && svc.status.endpoints.length === 5;
+          },
         },
       ],
-      pods,
-      nodes: [],
-      services: [],
-      events: [],
-    };
-  },
-  goalCheck: (state) => {
-    const dep = state.deployments.find((d) => d.metadata.name === 'web-app');
-    if (!dep || dep.spec.replicas !== 5) return false;
+      hints: [
+        { text: 'First, figure out what port the application listens on. Try: kubectl logs <pod-name> — look for the port number in the startup output.' },
+        { text: 'The logs show "Listening on port 8080" — that is the port your Service needs to target.' },
+        { text: 'Switch to the YAML Editor tab — fill in the ??? fields: name should be "web-svc", selector app should match "web-app", and use the port you discovered.' },
+        { text: 'Or use the terminal: kubectl create service web-svc --selector=app=web-app --port=8080', exact: false },
+        { text: 'After the service exists, scale the deployment: kubectl scale deployment web-app --replicas=5' },
+        { text: 'Use kubectl get endpoints to verify all 5 pods are registered.' },
+      ],
+    },
+    {
+      title: 'Debug a Misconfigured Service',
+      goalDescription:
+        'The "api-svc" Service has the wrong selector and shows 0 endpoints. Use describe and get endpoints to diagnose, then fix the selector.',
+      successMessage:
+        'You diagnosed a Service with 0 endpoints by checking the selector mismatch. Mismatched selectors are one of the most common networking issues in Kubernetes.',
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'api:1.0';
+        const hash = templateHash({ image });
 
-    const svc = state.services.find((s) => s.spec.selector['app'] === 'web-app');
-    if (!svc) return false;
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`api-server-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'api-server', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `api-server-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
 
-    // Need 5 endpoints (all Running pods matching selector)
-    return svc.status.endpoints.length === 5;
-  },
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'api-server', uid: depUid, labels: { app: 'api-server' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 3, selector: { app: 'api-server' },
+              template: { labels: { app: 'api-server' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 3, updatedReplicas: 3, readyReplicas: 3, availableReplicas: 3, conditions: [{ type: 'Available', status: 'True' }] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `api-server-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'api-server', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'api-server', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 3, selector: { app: 'api-server', 'pod-template-hash': hash },
+              template: { labels: { app: 'api-server', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 3, readyReplicas: 3 },
+          }],
+          pods,
+          nodes: [],
+          services: [{
+            kind: 'Service' as const,
+            metadata: { name: 'api-svc', uid: generateUID(), labels: {}, creationTimestamp: Date.now() - 120000 },
+            spec: { selector: { app: 'api' }, port: 8080 },
+            status: { endpoints: [] },
+          }],
+          events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl describe service api-svc" to inspect the service',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-service'),
+        },
+        {
+          description: 'Use "kubectl get endpoints" to verify 0 endpoints',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-endpoints'),
+        },
+        {
+          description: 'Use "kubectl patch" to fix the service selector',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('patch'),
+        },
+        {
+          description: 'Fix the selector to app=api-server',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'api-svc');
+            return !!svc && svc.spec.selector['app'] === 'api-server';
+          },
+        },
+        {
+          description: 'Verify 3 endpoints on the service',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'api-svc');
+            return !!svc && svc.status.endpoints.length === 3;
+          },
+        },
+      ],
+      hints: [
+        { text: 'Run "kubectl describe service api-svc" to see the selector and endpoint count.' },
+        { text: 'Run "kubectl get endpoints" to confirm the service has 0 endpoints.' },
+        { text: 'Compare the service selector (app=api) with the pod labels (app=api-server). They don\'t match!' },
+        { text: 'kubectl patch service api-svc --selector=app=api-server', exact: true },
+      ],
+    },
+  ],
 };

@@ -13,33 +13,6 @@ export const lessonIngress: Lesson = {
   successMessage:
     'You created an Ingress. External traffic to your specified host/path will now be routed through the Ingress controller ' +
     'to the "web-svc" Service and its pods. This is how you expose HTTP applications to the outside world.',
-  yamlTemplate: `apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: web-ing
-spec:
-  rules:
-  - host: ???
-    http:
-      paths:
-      - path: /
-        backend:
-          service:
-            name: ???
-            port:
-              number: ???`,
-  hints: [
-    { text: 'Switch to the YAML Editor tab — fill in host as "myapp.example.com", service name as "web-svc", and port as 80.' },
-    { text: 'Or use the terminal: kubectl create ingress web-ing --rule=myapp.example.com/=web-svc:80', exact: false },
-  ],
-  goals: [
-    {
-      description: 'Create an Ingress routing myapp.example.com to "web-svc"',
-      check: (s: ClusterState) => {
-        return s.ingresses.some(ing => ing.spec.rules.some(r => r.serviceName === 'web-svc' && r.host === 'myapp.example.com'));
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -223,144 +196,185 @@ spec:
         'some may ignore it, some may claim it, leading to unpredictable results. Always specify ingressClassName explicitly in multi-controller environments.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
-
-    const pods = Array.from({ length: 2 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image },
-      status: { phase: 'Running' as const },
-    }));
-
-    return {
-      deployments: [
+  practices: [
+    {
+      title: 'Create an Ingress Route',
+      goalDescription:
+        'Create an Ingress named "web-ing" that routes traffic from myapp.example.com to the "web-svc" Service on port 80.',
+      successMessage:
+        'You created an Ingress. External traffic to your specified host/path will now be routed through the Ingress controller ' +
+        'to the "web-svc" Service and its pods. This is how you expose HTTP applications to the outside world.',
+      yamlTemplate: `apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-ing
+spec:
+  rules:
+  - host: ???
+    http:
+      paths:
+      - path: /
+        backend:
+          service:
+            name: ???
+            port:
+              number: ???`,
+      hints: [
+        { text: 'Switch to the YAML Editor tab — fill in host as "myapp.example.com", service name as "web-svc", and port as 80.' },
+        { text: 'Or use the terminal: kubectl create ingress web-ing --rule=myapp.example.com/=web-svc:80', exact: false },
+      ],
+      goals: [
         {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'web',
-            uid: depUid,
-            labels: { app: 'web' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 2,
-            selector: { app: 'web' },
-            template: {
-              labels: { app: 'web' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 2,
-            updatedReplicas: 2,
-            readyReplicas: 2,
-            availableReplicas: 2,
-            conditions: [{ type: 'Available', status: 'True' }],
+          description: 'Use "kubectl apply" or "kubectl create ingress" to create the Ingress',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply') || (s._commandsUsed ?? []).includes('create-ingress'),
+        },
+        {
+          description: 'Create an Ingress routing myapp.example.com to "web-svc"',
+          check: (s: ClusterState) => {
+            return s.ingresses.some(ing => ing.spec.rules.some(r => r.serviceName === 'web-svc' && r.host === 'myapp.example.com'));
           },
         },
       ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `web-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'web', 'pod-template-hash': hash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'web',
-              uid: depUid,
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 2,
-            selector: { app: 'web', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'web', 'pod-template-hash': hash },
-              spec: { image },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web',
+                uid: depUid,
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web' },
+                template: {
+                  labels: { app: 'web' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
             },
-          },
-          status: { replicas: 2, readyReplicas: 2 },
-        },
-      ],
-      pods,
-      nodes: [
-        {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-1',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-1' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 5 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 1,
-          },
-        },
-        {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-2',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-2' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 5 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 1,
-          },
-        },
-      ],
-      services: [
-        {
-          kind: 'Service' as const,
-          metadata: {
-            name: 'web-svc',
-            uid: generateUID(),
-            labels: {},
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: { selector: { app: 'web' }, port: 80 },
-          status: { endpoints: pods.map((p) => p.metadata.name) },
-        },
-      ],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    // Need at least 1 ingress that routes to web-svc
-    const ingress = state.ingresses.find((ing) =>
-      ing.spec.rules.some((r) => r.serviceName === 'web-svc')
-    );
-    return !!ingress;
-  },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
+            },
+          ],
+          pods,
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-1',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-1' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-2',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-2' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+          ],
+          services: [
+            {
+              kind: 'Service' as const,
+              metadata: {
+                name: 'web-svc',
+                uid: generateUID(),
+                labels: {},
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: { selector: { app: 'web' }, port: 80 },
+              status: { endpoints: pods.map((p) => p.metadata.name) },
+            },
+          ],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        // Need at least 1 ingress that routes to web-svc
+        const ingress = state.ingresses.find((ing) =>
+          ing.spec.rules.some((r) => r.serviceName === 'web-svc')
+        );
+        return !!ingress;
+      },
+    },
+  ],
 };

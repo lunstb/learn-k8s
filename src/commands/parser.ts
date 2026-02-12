@@ -247,7 +247,38 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
         flags: {},
       };
     }
-    return { error: 'Unknown rollout subcommand. Supported: rollout status, rollout restart' };
+    if (idx < parts.length && parts[idx].toLowerCase() === 'undo') {
+      idx++;
+      if (idx >= parts.length) {
+        return { error: 'Usage: kubectl rollout undo deployment/<name>' };
+      }
+      const resourcePart = parts[idx];
+      let resourceType: string;
+      let resourceName: string;
+
+      if (resourcePart.includes('/')) {
+        const [type, name] = resourcePart.split('/');
+        const normalizedType = RESOURCE_ALIASES[type.toLowerCase()];
+        if (!normalizedType) return { error: `Unknown resource type: ${type}` };
+        resourceType = normalizedType;
+        resourceName = name;
+      } else {
+        const normalizedType = RESOURCE_ALIASES[resourcePart.toLowerCase()];
+        if (!normalizedType) return { error: `Unknown resource type: ${resourcePart}` };
+        resourceType = normalizedType;
+        idx++;
+        if (idx >= parts.length) return { error: 'Missing resource name.' };
+        resourceName = parts[idx];
+      }
+
+      return {
+        action: 'rollout-undo',
+        resourceType,
+        resourceName,
+        flags: {},
+      };
+    }
+    return { error: 'Unknown rollout subcommand. Supported: rollout status, rollout restart, rollout undo' };
   }
 
   // Handle "logs" command: kubectl logs <pod-name> [--tail=N]

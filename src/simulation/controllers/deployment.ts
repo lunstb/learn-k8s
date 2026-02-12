@@ -205,21 +205,25 @@ export function reconcileDeployments(state: ClusterState): ReconcileResult {
             message: `Scaled up replica set "${activeRS.metadata.name}" to ${desiredReplicas} (Recreate)`,
           });
         }
-        // Clean up old RS
-        for (const oldRS of oldReplicaSets) {
-          const oldPods = pods.filter(
-            (p) =>
-              p.metadata.ownerReference?.uid === oldRS.metadata.uid &&
-              !p.metadata.deletionTimestamp
-          ).length;
-          if (oldPods === 0) {
-            oldRS.metadata.deletionTimestamp = Date.now();
-            actions.push({
-              controller: 'DeploymentController',
-              action: 'cleanup',
-              details: `Cleaning up old ReplicaSet ${oldRS.metadata.name} (0 replicas)`,
-            });
-          }
+        // Clean up old RS — keep the most recent one for rollback history
+        const emptyOldRS = oldReplicaSets
+          .filter((rs) => {
+            const oldPods = pods.filter(
+              (p) =>
+                p.metadata.ownerReference?.uid === rs.metadata.uid &&
+                !p.metadata.deletionTimestamp
+            ).length;
+            return oldPods === 0;
+          })
+          .sort((a, b) => (b.metadata.creationTimestamp ?? 0) - (a.metadata.creationTimestamp ?? 0));
+        // Keep the most recent empty old RS, delete older ones
+        for (const oldRS of emptyOldRS.slice(1)) {
+          oldRS.metadata.deletionTimestamp = Date.now();
+          actions.push({
+            controller: 'DeploymentController',
+            action: 'cleanup',
+            details: `Cleaning up old ReplicaSet ${oldRS.metadata.name} (0 replicas)`,
+          });
         }
       }
     } else if (oldReplicaSets.length > 0) {
@@ -277,15 +281,25 @@ export function reconcileDeployments(state: ClusterState): ReconcileResult {
             }
           }
 
-          // Clean up old RS with 0 replicas and 0 pods
-          if (oldRS.spec.replicas === 0 && currentOldPods === 0) {
-            oldRS.metadata.deletionTimestamp = Date.now();
-            actions.push({
-              controller: 'DeploymentController',
-              action: 'cleanup',
-              details: `Cleaning up old ReplicaSet ${oldRS.metadata.name} (0 replicas)`,
-            });
-          }
+        }
+        // Clean up old RS with 0 replicas and 0 pods — keep the most recent one for rollback
+        const emptyOldRolling = oldReplicaSets
+          .filter((rs) => {
+            const oP = pods.filter(
+              (p) =>
+                p.metadata.ownerReference?.uid === rs.metadata.uid &&
+                !p.metadata.deletionTimestamp
+            ).length;
+            return rs.spec.replicas === 0 && oP === 0;
+          })
+          .sort((a, b) => (b.metadata.creationTimestamp ?? 0) - (a.metadata.creationTimestamp ?? 0));
+        for (const oldRS of emptyOldRolling.slice(1)) {
+          oldRS.metadata.deletionTimestamp = Date.now();
+          actions.push({
+            controller: 'DeploymentController',
+            action: 'cleanup',
+            details: `Cleaning up old ReplicaSet ${oldRS.metadata.name} (0 replicas)`,
+          });
         }
       } else if (activeRS.spec.replicas > 0) {
         // Stall detection: new RS has pods but none are Running

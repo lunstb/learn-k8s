@@ -12,46 +12,6 @@ export const lessonLabelsAnnotations: Lesson = {
     'Manipulate pod labels so that the "web-svc" Service routes traffic to all 3 pods. Start by adding the missing label, then fix the extra pod.',
   successMessage:
     'All 3 pods now have matching labels and the Service is routing traffic to all of them. Labels are the fundamental grouping mechanism in Kubernetes.',
-  yamlTemplate: `# Labels are key-value pairs on objects.
-# Services use label selectors to find pods.
-#
-# Use kubectl to manipulate labels:
-#   kubectl label pod <name> key=value    (add/update)
-#   kubectl label pod <name> key-         (remove)
-#
-# Check which pods a service selects:
-#   kubectl get pods --show-labels
-#   kubectl describe service web-svc`,
-  hints: [
-    { text: 'Run `kubectl get pods --show-labels` to see which pods have which labels.' },
-    { text: 'The Service selects pods with `app=web` and `tier=frontend`. Check which pods are missing a label.' },
-    { text: 'Use kubectl label to add the tier=frontend label to web-1.' },
-    { text: 'Pod web-3 has `tier=backend` — change it to `tier=frontend`.' },
-    { text: 'Use kubectl label with --overwrite to change web-3\'s tier from backend to frontend.' },
-  ],
-  goals: [
-    {
-      description: 'Pod "web-1" has both labels: app=web and tier=frontend',
-      check: (s: ClusterState) => {
-        const pod = s.pods.find((p) => p.metadata.name === 'web-1');
-        return !!pod && pod.metadata.labels['app'] === 'web' && pod.metadata.labels['tier'] === 'frontend';
-      },
-    },
-    {
-      description: 'Pod "web-3" has tier=frontend (not tier=backend)',
-      check: (s: ClusterState) => {
-        const pod = s.pods.find((p) => p.metadata.name === 'web-3');
-        return !!pod && pod.metadata.labels['tier'] === 'frontend';
-      },
-    },
-    {
-      description: 'Service "web-svc" has 3 endpoints',
-      check: (s: ClusterState) => {
-        const svc = s.services.find((svc) => svc.metadata.name === 'web-svc');
-        return !!svc && svc.status.endpoints.length >= 3;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -246,87 +206,144 @@ export const lessonLabelsAnnotations: Lesson = {
         'and creates a healthy replacement. This is a powerful operational technique for debugging production issues without losing the misbehaving pod.',
     },
   ],
-  initialState: () => {
-    // 3 pods with varied labels — Service selects app=web, tier=frontend
-    // web-1: has app=web but MISSING tier label
-    // web-2: has app=web, tier=frontend (correct)
-    // web-3: has app=web, tier=backend (wrong tier value)
-    const pods = [
-      {
-        kind: 'Pod' as const,
-        metadata: {
-          name: 'web-1',
-          uid: generateUID(),
-          labels: { app: 'web' } as Record<string, string>,
-          creationTimestamp: Date.now() - 60000,
+  practices: [
+    {
+      title: 'Fix Service Routing with Labels',
+      goalDescription:
+        'Manipulate pod labels so that the "web-svc" Service routes traffic to all 3 pods. Start by adding the missing label, then fix the extra pod.',
+      successMessage:
+        'All 3 pods now have matching labels and the Service is routing traffic to all of them. Labels are the fundamental grouping mechanism in Kubernetes.',
+      yamlTemplate: `# Labels are key-value pairs on objects.
+# Services use label selectors to find pods.
+#
+# Use kubectl to manipulate labels:
+#   kubectl label pod <name> key=value    (add/update)
+#   kubectl label pod <name> key-         (remove)
+#
+# Check which pods a service selects:
+#   kubectl get pods --show-labels
+#   kubectl describe service web-svc`,
+      hints: [
+        { text: 'Run `kubectl get pods --show-labels` to see which pods have which labels.' },
+        { text: 'The Service selects pods with `app=web` and `tier=frontend`. Check which pods are missing a label.' },
+        { text: 'Use kubectl label to add the tier=frontend label to web-1.' },
+        { text: 'Pod web-3 has `tier=backend` — change it to `tier=frontend`.' },
+        { text: 'Use kubectl label with --overwrite to change web-3\'s tier from backend to frontend.' },
+      ],
+      goals: [
+        {
+          description: 'Use "kubectl get pods" to check pod labels',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
         },
-        spec: { image: 'nginx:1.21', nodeName: 'node-1' },
-        status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
-      },
-      {
-        kind: 'Pod' as const,
-        metadata: {
-          name: 'web-2',
-          uid: generateUID(),
-          labels: { app: 'web', tier: 'frontend' } as Record<string, string>,
-          creationTimestamp: Date.now() - 60000,
+        {
+          description: 'Use "kubectl label" to fix pod labels',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('label'),
         },
-        spec: { image: 'nginx:1.21', nodeName: 'node-1' },
-        status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
-      },
-      {
-        kind: 'Pod' as const,
-        metadata: {
-          name: 'web-3',
-          uid: generateUID(),
-          labels: { app: 'web', tier: 'backend' } as Record<string, string>,
-          creationTimestamp: Date.now() - 60000,
+        {
+          description: 'Pod "web-1" has both labels: app=web and tier=frontend',
+          check: (s: ClusterState) => {
+            const pod = s.pods.find((p) => p.metadata.name === 'web-1');
+            return !!pod && pod.metadata.labels['app'] === 'web' && pod.metadata.labels['tier'] === 'frontend';
+          },
         },
-        spec: { image: 'nginx:1.21', nodeName: 'node-2' },
-        status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
-      },
-    ];
+        {
+          description: 'Pod "web-3" has tier=frontend (not tier=backend)',
+          check: (s: ClusterState) => {
+            const pod = s.pods.find((p) => p.metadata.name === 'web-3');
+            return !!pod && pod.metadata.labels['tier'] === 'frontend';
+          },
+        },
+        {
+          description: 'Service "web-svc" has 3 endpoints',
+          check: (s: ClusterState) => {
+            const svc = s.services.find((svc) => svc.metadata.name === 'web-svc');
+            return !!svc && svc.status.endpoints.length >= 3;
+          },
+        },
+      ],
+      initialState: () => {
+        // 3 pods with varied labels — Service selects app=web, tier=frontend
+        // web-1: has app=web but MISSING tier label
+        // web-2: has app=web, tier=frontend (correct)
+        // web-3: has app=web, tier=backend (wrong tier value)
+        const pods = [
+          {
+            kind: 'Pod' as const,
+            metadata: {
+              name: 'web-1',
+              uid: generateUID(),
+              labels: { app: 'web' } as Record<string, string>,
+              creationTimestamp: Date.now() - 60000,
+            },
+            spec: { image: 'nginx:1.21', nodeName: 'node-1' },
+            status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
+          },
+          {
+            kind: 'Pod' as const,
+            metadata: {
+              name: 'web-2',
+              uid: generateUID(),
+              labels: { app: 'web', tier: 'frontend' } as Record<string, string>,
+              creationTimestamp: Date.now() - 60000,
+            },
+            spec: { image: 'nginx:1.21', nodeName: 'node-1' },
+            status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
+          },
+          {
+            kind: 'Pod' as const,
+            metadata: {
+              name: 'web-3',
+              uid: generateUID(),
+              labels: { app: 'web', tier: 'backend' } as Record<string, string>,
+              creationTimestamp: Date.now() - 60000,
+            },
+            spec: { image: 'nginx:1.21', nodeName: 'node-2' },
+            status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
+          },
+        ];
 
-    return {
-      pods,
-      replicaSets: [],
-      deployments: [],
-      nodes: [
-        {
-          kind: 'Node' as const,
-          metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 2 },
-        },
-        {
-          kind: 'Node' as const,
-          metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
-        },
-      ],
-      services: [
-        {
-          kind: 'Service' as const,
-          metadata: { name: 'web-svc', uid: generateUID(), labels: {}, creationTimestamp: Date.now() - 120000 },
-          spec: { selector: { app: 'web', tier: 'frontend' }, port: 80 },
-          status: { endpoints: [] as string[] },
-        },
-      ],
-      events: [],
-    };
-  },
-  goalCheck: (state: ClusterState) => {
-    const svc = state.services.find((s) => s.metadata.name === 'web-svc');
-    if (!svc || svc.status.endpoints.length < 3) return false;
-    // All 3 pods must have app=web and tier=frontend
-    const matching = state.pods.filter(
-      (p) =>
-        p.metadata.labels['app'] === 'web' &&
-        p.metadata.labels['tier'] === 'frontend' &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
-    return matching.length >= 3;
-  },
+        return {
+          pods,
+          replicaSets: [],
+          deployments: [],
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 2 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+          ],
+          services: [
+            {
+              kind: 'Service' as const,
+              metadata: { name: 'web-svc', uid: generateUID(), labels: {}, creationTimestamp: Date.now() - 120000 },
+              spec: { selector: { app: 'web', tier: 'frontend' }, port: 80 },
+              status: { endpoints: [] as string[] },
+            },
+          ],
+          events: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        const svc = state.services.find((s) => s.metadata.name === 'web-svc');
+        if (!svc || svc.status.endpoints.length < 3) return false;
+        // All 3 pods must have app=web and tier=frontend
+        const matching = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'web' &&
+            p.metadata.labels['tier'] === 'frontend' &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
+        return matching.length >= 3;
+      },
+    },
+  ],
 };

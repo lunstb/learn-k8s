@@ -12,63 +12,6 @@ export const lessonTaintsTolerations: Lesson = {
     'Node "gpu-node" is tainted with dedicated=gpu:NoSchedule. Deploy an app — observe pods avoid the tainted node. Then apply a deployment YAML with a toleration so a pod schedules on gpu-node.',
   successMessage:
     'A pod with the correct toleration is now running on the tainted gpu-node. Taints and tolerations give you fine-grained control over pod placement.',
-  yamlTemplate: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: gpu-app
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: gpu-app
-  template:
-    metadata:
-      labels:
-        app: gpu-app
-    spec:
-      containers:
-      - name: gpu-app
-        image: gpu-worker:1.0
-      tolerations:
-      - key: dedicated
-        operator: Equal
-        value: gpu
-        effect: NoSchedule`,
-  hints: [
-    { text: 'Start by creating a simple deployment (e.g., nginx) to see how the scheduler avoids the tainted node.' },
-    { text: 'Run `kubectl get pods -o wide` to see which nodes pods are on — none should be on gpu-node.' },
-    { text: 'Now switch to the YAML Editor tab. The pre-filled template has a toleration that matches the gpu-node taint.' },
-    { text: 'kubectl create deployment web --image=nginx --replicas=3', exact: true },
-  ],
-  goals: [
-    {
-      description: 'A regular deployment exists with pods NOT on gpu-node',
-      check: (s: ClusterState) => {
-        const webPods = s.pods.filter(
-          (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
-        );
-        return webPods.length >= 1 && webPods.every((p) => p.spec.nodeName !== 'gpu-node');
-      },
-    },
-    {
-      description: 'Apply gpu-app deployment with toleration via YAML',
-      check: (s: ClusterState) => {
-        return s.deployments.some((d) => d.metadata.name === 'gpu-app');
-      },
-    },
-    {
-      description: 'A gpu-app pod is running on gpu-node',
-      check: (s: ClusterState) => {
-        return s.pods.some(
-          (p) =>
-            p.metadata.labels['app'] === 'gpu-app' &&
-            p.spec.nodeName === 'gpu-node' &&
-            p.status.phase === 'Running' &&
-            !p.metadata.deletionTimestamp
-        );
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -230,53 +173,127 @@ spec:
         'to prevent new workloads on nodes with resource pressure.',
     },
   ],
-  initialState: () => {
-    return {
-      pods: [],
-      replicaSets: [],
-      deployments: [],
-      nodes: [
+  practices: [
+    {
+      title: 'Schedule on a Tainted Node',
+      goalDescription:
+        'Node "gpu-node" is tainted with dedicated=gpu:NoSchedule. Deploy an app — observe pods avoid the tainted node. Then apply a deployment YAML with a toleration so a pod schedules on gpu-node.',
+      successMessage:
+        'A pod with the correct toleration is now running on the tainted gpu-node. Taints and tolerations give you fine-grained control over pod placement.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gpu-app
+  template:
+    metadata:
+      labels:
+        app: gpu-app
+    spec:
+      containers:
+      - name: gpu-app
+        image: gpu-worker:1.0
+      tolerations:
+      - key: dedicated
+        operator: Equal
+        value: gpu
+        effect: NoSchedule`,
+      hints: [
+        { text: 'Start by creating a simple deployment (e.g., nginx) to see how the scheduler avoids the tainted node.' },
+        { text: 'Run `kubectl get pods -o wide` to see which nodes pods are on — none should be on gpu-node.' },
+        { text: 'Now switch to the YAML Editor tab. The pre-filled template has a toleration that matches the gpu-node taint.' },
+        { text: 'kubectl create deployment web --image=nginx --replicas=3', exact: true },
+      ],
+      goals: [
         {
-          kind: 'Node' as const,
-          metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+          description: 'Create a regular deployment',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-deployment'),
         },
         {
-          kind: 'Node' as const,
-          metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+          description: 'Apply YAML with toleration',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
         },
         {
-          kind: 'Node' as const,
-          metadata: { name: 'gpu-node', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'gpu-node', 'nvidia.com/gpu': 'present' } as Record<string, string>, creationTimestamp: Date.now() - 300000 },
-          spec: {
-            capacity: { pods: 10 },
-            taints: [{ key: 'dedicated', value: 'gpu', effect: 'NoSchedule' as const }],
+          description: 'A regular deployment exists with pods NOT on gpu-node',
+          check: (s: ClusterState) => {
+            const webPods = s.pods.filter(
+              (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+            );
+            return webPods.length >= 1 && webPods.every((p) => p.spec.nodeName !== 'gpu-node');
           },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+        },
+        {
+          description: 'Apply gpu-app deployment with toleration via YAML',
+          check: (s: ClusterState) => {
+            return s.deployments.some((d) => d.metadata.name === 'gpu-app');
+          },
+        },
+        {
+          description: 'A gpu-app pod is running on gpu-node',
+          check: (s: ClusterState) => {
+            return s.pods.some(
+              (p) =>
+                p.metadata.labels['app'] === 'gpu-app' &&
+                p.spec.nodeName === 'gpu-node' &&
+                p.status.phase === 'Running' &&
+                !p.metadata.deletionTimestamp
+            );
+          },
         },
       ],
-      services: [],
-      events: [],
-    };
-  },
-  goalCheck: (state: ClusterState) => {
-    // Goal 1: A web pod running NOT on gpu-node
-    const webPods = state.pods.filter(
-      (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
-    );
-    if (webPods.length === 0 || webPods.some((p) => p.spec.nodeName === 'gpu-node')) return false;
+      initialState: () => {
+        return {
+          pods: [],
+          replicaSets: [],
+          deployments: [],
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'gpu-node', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'gpu-node', 'nvidia.com/gpu': 'present' } as Record<string, string>, creationTimestamp: Date.now() - 300000 },
+              spec: {
+                capacity: { pods: 10 },
+                taints: [{ key: 'dedicated', value: 'gpu', effect: 'NoSchedule' as const }],
+              },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 0 },
+            },
+          ],
+          services: [],
+          events: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        // Goal 1: A web pod running NOT on gpu-node
+        const webPods = state.pods.filter(
+          (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+        );
+        if (webPods.length === 0 || webPods.some((p) => p.spec.nodeName === 'gpu-node')) return false;
 
-    // Goal 2: A gpu-app pod running ON gpu-node
-    const gpuPods = state.pods.filter(
-      (p) =>
-        p.metadata.labels['app'] === 'gpu-app' &&
-        p.spec.nodeName === 'gpu-node' &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
-    return gpuPods.length >= 1;
-  },
+        // Goal 2: A gpu-app pod running ON gpu-node
+        const gpuPods = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'gpu-app' &&
+            p.spec.nodeName === 'gpu-node' &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
+        return gpuPods.length >= 1;
+      },
+    },
+  ],
 };

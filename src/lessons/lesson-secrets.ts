@@ -13,26 +13,6 @@ export const lessonSecrets: Lesson = {
   successMessage:
     'You created the Secret and the pods recovered! Just like ConfigMaps, pods that reference missing Secrets enter CreateContainerConfigError. ' +
     'Remember: Secrets are base64-encoded, not encrypted — use external solutions for true encryption at rest.',
-  hints: [
-    { text: 'Run "kubectl get pods" to see the error status, then "kubectl describe pod <name>" to see the detailed error message explaining what\'s missing.' },
-    { text: 'The syntax is: kubectl create secret generic <name> --from-literal=<key>=<value>' },
-    { text: 'kubectl create secret generic db-credentials --from-literal=password=secret123', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Create Secret "db-credentials" with at least one key',
-      check: (s: ClusterState) => {
-        const secret = s.secrets.find(sec => sec.metadata.name === 'db-credentials');
-        return !!secret && Object.keys(secret.data).length >= 1;
-      },
-    },
-    {
-      description: 'All "db-app" pods Running',
-      check: (s: ClusterState) => {
-        return s.pods.filter(p => p.metadata.labels['app'] === 'db-app' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 2;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -205,78 +185,224 @@ export const lessonSecrets: Lesson = {
         'This is a strong argument for preferring volume mounts over env vars for Secrets that may need rotation.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'db-app:1.0';
-    const hash = templateHash({ image });
-
-    const pods = Array.from({ length: 2 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`db-app-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'db-app', 'pod-template-hash': hash },
-        ownerReference: { kind: 'ReplicaSet', name: `db-app-${hash.slice(0, 10)}`, uid: rsUid },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image, envFrom: [{ secretRef: 'db-credentials' }] },
-      status: { phase: 'Pending' as const, reason: 'CreateContainerConfigError', message: 'secret "db-credentials" not found' },
-    }));
-
-    return {
-      deployments: [{
-        kind: 'Deployment' as const,
-        metadata: { name: 'db-app', uid: depUid, labels: { app: 'db-app' }, creationTimestamp: Date.now() - 120000 },
-        spec: {
-          replicas: 2, selector: { app: 'db-app' },
-          template: { labels: { app: 'db-app' }, spec: { image, envFrom: [{ secretRef: 'db-credentials' }] } },
-          strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-        },
-        status: { replicas: 2, updatedReplicas: 0, readyReplicas: 0, availableReplicas: 0, conditions: [] },
-      }],
-      replicaSets: [{
-        kind: 'ReplicaSet' as const,
-        metadata: {
-          name: `db-app-${hash.slice(0, 10)}`, uid: rsUid,
-          labels: { app: 'db-app', 'pod-template-hash': hash },
-          ownerReference: { kind: 'Deployment', name: 'db-app', uid: depUid },
-          creationTimestamp: Date.now() - 120000,
-        },
-        spec: {
-          replicas: 2, selector: { app: 'db-app', 'pod-template-hash': hash },
-          template: { labels: { app: 'db-app', 'pod-template-hash': hash }, spec: { image, envFrom: [{ secretRef: 'db-credentials' }] } },
-        },
-        status: { replicas: 2, readyReplicas: 0 },
-      }],
-      pods,
-      nodes: [
+  practices: [
+    {
+      title: 'Fix a Missing Secret',
+      goalDescription:
+        'The "db-app" Deployment pods are stuck in CreateContainerConfigError because they reference a missing Secret named "db-credentials". Create the Secret with at least one key-value pair to fix them.',
+      successMessage:
+        'You created the Secret and the pods recovered! Just like ConfigMaps, pods that reference missing Secrets enter CreateContainerConfigError. ' +
+        'Remember: Secrets are base64-encoded, not encrypted — use external solutions for true encryption at rest.',
+      hints: [
+        { text: 'Run "kubectl get pods" to see the error status, then "kubectl describe pod <name>" to see the detailed error message explaining what\'s missing.' },
+        { text: 'The syntax is: kubectl create secret generic <name> --from-literal=<key>=<value>' },
+        { text: 'kubectl create secret generic db-credentials --from-literal=password=secret123', exact: true },
+      ],
+      goals: [
         {
-          kind: 'Node' as const,
-          metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 5 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+          description: 'Create the missing Secret',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-secret'),
         },
         {
-          kind: 'Node' as const,
-          metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
-          spec: { capacity: { pods: 5 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+          description: 'Secret "db-credentials" has at least one key',
+          check: (s: ClusterState) => {
+            const secret = s.secrets.find(sec => sec.metadata.name === 'db-credentials');
+            return !!secret && Object.keys(secret.data).length >= 1;
+          },
+        },
+        {
+          description: 'All "db-app" pods Running',
+          check: (s: ClusterState) => {
+            return s.pods.filter(p => p.metadata.labels['app'] === 'db-app' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 2;
+          },
         },
       ],
-      services: [], events: [], namespaces: [], configMaps: [], secrets: [],
-      ingresses: [], statefulSets: [], daemonSets: [], jobs: [], cronJobs: [], hpas: [], helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    const secret = state.secrets.find((s) => s.metadata.name === 'db-credentials');
-    if (!secret) return false;
-    if (Object.keys(secret.data).length < 1) return false;
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'db-app:1.0';
+        const hash = templateHash({ image });
 
-    // Pods must be Running
-    const dbPods = state.pods.filter(
-      (p) => p.metadata.labels['app'] === 'db-app' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
-    );
-    return dbPods.length >= 2;
-  },
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`db-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'db-app', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `db-app-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image, envFrom: [{ secretRef: 'db-credentials' }] },
+          status: { phase: 'Pending' as const, reason: 'CreateContainerConfigError', message: 'secret "db-credentials" not found' },
+        }));
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'db-app', uid: depUid, labels: { app: 'db-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 2, selector: { app: 'db-app' },
+              template: { labels: { app: 'db-app' }, spec: { image, envFrom: [{ secretRef: 'db-credentials' }] } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 2, updatedReplicas: 0, readyReplicas: 0, availableReplicas: 0, conditions: [] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `db-app-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'db-app', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'db-app', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 2, selector: { app: 'db-app', 'pod-template-hash': hash },
+              template: { labels: { app: 'db-app', 'pod-template-hash': hash }, spec: { image, envFrom: [{ secretRef: 'db-credentials' }] } },
+            },
+            status: { replicas: 2, readyReplicas: 0 },
+          }],
+          pods,
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 5 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 5 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+          ],
+          services: [], events: [], namespaces: [], configMaps: [], secrets: [],
+          ingresses: [], statefulSets: [], daemonSets: [], jobs: [], cronJobs: [], hpas: [], helmReleases: [],
+        };
+      },
+      goalCheck: (state) => {
+        const secret = state.secrets.find((s) => s.metadata.name === 'db-credentials');
+        if (!secret) return false;
+        if (Object.keys(secret.data).length < 1) return false;
+
+        // Pods must be Running
+        const dbPods = state.pods.filter(
+          (p) => p.metadata.labels['app'] === 'db-app' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+        );
+        return dbPods.length >= 2;
+      },
+    },
+    {
+      title: 'Create a Docker Registry Secret',
+      goalDescription:
+        'The "private-app" Deployment has ImagePullError. Create a docker-registry Secret named "registry-creds", then fix the image name typo from "registri" to "registry".',
+      successMessage:
+        'The docker-registry Secret authenticates pods with private registries. In production, imagePullSecrets in the pod spec reference these secrets automatically.',
+      podFailureRules: {
+        'registri.example.com/app:1.0': 'ImagePullError',
+      },
+      hints: [
+        { text: 'Run "kubectl describe pod" to see why the image pull is failing.' },
+        { text: 'Create a docker-registry secret: kubectl create secret docker-registry registry-creds --docker-server=registry.example.com --docker-username=user --docker-password=pass' },
+        { text: 'The image has a typo: "registri" should be "registry".' },
+        { text: 'kubectl set image deployment/private-app registry.example.com/app:1.0', exact: true },
+      ],
+      goals: [
+        {
+          description: 'Create a docker-registry Secret named "registry-creds"',
+          check: (s: ClusterState) => s.secrets.some(sec => sec.metadata.name === 'registry-creds' && sec.type === 'kubernetes.io/dockerconfigjson'),
+        },
+        {
+          description: 'Fix the image to "registry.example.com/app:1.0"',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'private-app');
+            return !!dep && dep.spec.template.spec.image === 'registry.example.com/app:1.0';
+          },
+        },
+        {
+          description: 'All "private-app" pods Running',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'private-app');
+            return !!dep && (dep.status.readyReplicas || 0) >= 2;
+          },
+        },
+      ],
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'registri.example.com/app:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`private-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'private-app', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `private-app-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image },
+          status: { phase: 'Pending' as const, reason: 'ImagePullError', message: 'Failed to pull image "registri.example.com/app:1.0": registry not found' },
+        }));
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'private-app', uid: depUid, labels: { app: 'private-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 2, selector: { app: 'private-app' },
+              template: { labels: { app: 'private-app' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 2, updatedReplicas: 0, readyReplicas: 0, availableReplicas: 0, conditions: [] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `private-app-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'private-app', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'private-app', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 2, selector: { app: 'private-app', 'pod-template-hash': hash },
+              template: { labels: { app: 'private-app', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 2, readyReplicas: 0 },
+          }],
+          pods,
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 5 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-2', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-2' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 5 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+          ],
+          services: [], events: [], namespaces: [], configMaps: [], secrets: [],
+          ingresses: [], statefulSets: [], daemonSets: [], jobs: [], cronJobs: [], hpas: [], helmReleases: [],
+        };
+      },
+      goalCheck: (state) => {
+        // Secret must exist with correct type
+        const secret = state.secrets.find((s) => s.metadata.name === 'registry-creds' && s.type === 'kubernetes.io/dockerconfigjson');
+        if (!secret) return false;
+
+        // Deployment image must be fixed
+        const dep = state.deployments.find((d) => d.metadata.name === 'private-app');
+        if (!dep) return false;
+        if (dep.spec.template.spec.image !== 'registry.example.com/app:1.0') return false;
+
+        // Pods must be Running
+        return (dep.status.readyReplicas || 0) >= 2;
+      },
+    },
+  ],
 };

@@ -363,6 +363,7 @@ export interface ClusterState {
   persistentVolumeClaims: PersistentVolumeClaim[];
   podDisruptionBudgets: PodDisruptionBudget[];
   helmReleases: HelmRelease[];
+  _commandsUsed?: string[];
   tick: number;
 }
 

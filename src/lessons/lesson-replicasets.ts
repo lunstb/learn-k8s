@@ -13,31 +13,6 @@ export const lessonReplicaSets: Lesson = {
   successMessage:
     'Scaling is declarative — the controller creates or removes only the diff. ' +
     'From 2\u21925 it created 3. From 5\u21922 it removed 3.',
-  hints: [
-    { text: 'Use kubectl scale to change the replica count of a deployment.' },
-    { text: 'kubectl scale deployment my-app --replicas=5', exact: true },
-    { text: 'After seeing 5 pods Running, scale back down.' },
-    { text: 'kubectl scale deployment my-app --replicas=2', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Scale "my-app" up to 5 replicas',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
-        return !!dep && dep.spec.replicas >= 5;
-      },
-    },
-    {
-      description: 'Scale "my-app" back down to 2 replicas',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
-        if (!dep || dep.spec.replicas !== 2) return false;
-        const rs = s.replicaSets.find(r => r.metadata.ownerReference?.uid === dep.metadata.uid && !r.metadata.deletionTimestamp);
-        if (!rs) return false;
-        return s.pods.filter(p => p.metadata.ownerReference?.uid === rs.metadata.uid && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length === 2;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -180,103 +155,251 @@ export const lessonReplicaSets: Lesson = {
         'to ensure each ReplicaSet only counts pods from its own template, even when multiple ReplicaSets share the same app label.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
+  practices: [
+    {
+      title: 'Scale Up and Down',
+      goalDescription:
+        'Scale the "my-app" Deployment to 5 replicas, then back down to 2 replicas.',
+      successMessage:
+        'Scaling is declarative — the controller creates or removes only the diff. From 2\u21925 it created 3. From 5\u21922 it removed 3.',
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
 
-    const pods = Array.from({ length: 2 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`my-app-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'my-app', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `my-app-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image },
-      status: { phase: 'Running' as const },
-    }));
-
-    return {
-      deployments: [
-        {
-          kind: 'Deployment' as const,
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: 'my-app',
-            uid: depUid,
-            labels: { app: 'my-app' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 2,
-            selector: { app: 'my-app' },
-            template: {
-              labels: { app: 'my-app' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 2,
-            updatedReplicas: 2,
-            readyReplicas: 2,
-            availableReplicas: 2,
-            conditions: [{ type: 'Available', status: 'True' }],
-          },
-        },
-      ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
-          metadata: {
-            name: `my-app-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name: generatePodName(`my-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'my-app', 'pod-template-hash': hash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'my-app',
-              uid: depUid,
+              kind: 'ReplicaSet',
+              name: `my-app-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 2,
-            selector: { app: 'my-app', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'my-app', 'pod-template-hash': hash },
-              spec: { image },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'my-app',
+                uid: depUid,
+                labels: { app: 'my-app' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'my-app' },
+                template: {
+                  labels: { app: 'my-app' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
             },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `my-app-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'my-app', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'my-app',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'my-app', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'my-app', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
+            },
+          ],
+          pods,
+          nodes: [],
+          services: [],
+          events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl scale" to change replica count',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('scale'),
+        },
+        {
+          description: 'Scale "my-app" up to 5 replicas',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+            return !!dep && dep.spec.replicas >= 5;
           },
-          status: { replicas: 2, readyReplicas: 2 },
+        },
+        {
+          description: 'Scale "my-app" back down to 2 replicas',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+            if (!dep || dep.spec.replicas !== 2) return false;
+            const rs = s.replicaSets.find(r => r.metadata.ownerReference?.uid === dep.metadata.uid && !r.metadata.deletionTimestamp);
+            if (!rs) return false;
+            return s.pods.filter(p => p.metadata.ownerReference?.uid === rs.metadata.uid && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length === 2;
+          },
         },
       ],
-      pods,
-      nodes: [],
-      services: [],
-      events: [],
-    };
-  },
-  goalCheck: (state) => {
-    const dep = state.deployments.find((d) => d.metadata.name === 'my-app');
-    if (!dep) return false;
-    if (dep.spec.replicas !== 2) return false;
-    const rs = state.replicaSets.find(
-      (r) => r.metadata.ownerReference?.uid === dep.metadata.uid && !r.metadata.deletionTimestamp
-    );
-    if (!rs) return false;
-    const pods = state.pods.filter(
-      (p) =>
-        p.metadata.ownerReference?.uid === rs.metadata.uid &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
-    // Must have scaled up to 5 at some point (tick > 0) and back down to 2
-    return pods.length === 2 && state.tick > 0;
-  },
+      hints: [
+        { text: 'Use kubectl scale to change the replica count of a deployment.' },
+        { text: 'kubectl scale deployment my-app --replicas=5', exact: true },
+        { text: 'After seeing 5 pods Running, scale back down.' },
+        { text: 'kubectl scale deployment my-app --replicas=2', exact: true },
+      ],
+    },
+    {
+      title: 'Label Selector Adoption',
+      goalDescription:
+        'Create a standalone pod and label it to match the Deployment\'s selector. Watch the ReplicaSet adopt it and then reconcile the excess. Final state: 2 Running pods.',
+      successMessage:
+        'The RS adopted the labeled pod — and then terminated an excess pod to maintain the desired count of 2. Label selectors are loose coupling: any pod with matching labels counts.',
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`web-app-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'web-app', 'pod-template-hash': hash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `web-app-${hash.slice(0, 10)}`,
+              uid: rsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web-app',
+                uid: depUid,
+                labels: { app: 'web-app' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web-app' },
+                template: {
+                  labels: { app: 'web-app' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
+            },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-app-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web-app', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web-app',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web-app', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web-app', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
+            },
+          ],
+          pods,
+          nodes: [],
+          services: [],
+          events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl get pods" to see the current pods',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
+        },
+        {
+          description: 'Create an extra pod with "kubectl create pod"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-pod'),
+        },
+        {
+          description: 'Create a standalone pod named "extra"',
+          check: (s: ClusterState) => s.pods.some(p => p.metadata.name === 'extra') || s.events.some(e => e.objectKind === 'Pod' && e.objectName === 'extra'),
+        },
+        {
+          description: 'Label the pod with "kubectl label pod extra app=web-app"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('label'),
+        },
+        {
+          description: 'Reconcile — RS sees excess and trims back to 2 Running pods',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
+            if (!dep) return false;
+            const running = s.pods.filter(p => p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+            return running.length === 2 && s.tick > 0;
+          },
+        },
+      ],
+      hints: [
+        { text: 'Start by running "kubectl get pods" to see the 2 existing pods.' },
+        { text: 'Create a standalone pod: kubectl create pod extra --image=nginx:1.0', exact: true },
+        { text: 'Label it to match the RS selector: kubectl label pod extra app=web-app', exact: true },
+        { text: 'Reconcile to see the RS adopt the pod and trim excess.' },
+      ],
+      steps: [{
+        id: 'intro-labels',
+        trigger: 'onLoad' as const,
+        instruction: 'The Deployment "web-app" has 2 replicas. Create a standalone pod "extra", then label it with app=web-app. Reconcile and watch what happens when the RS sees 3 pods but only wants 2.',
+      }],
+    },
+  ],
 };

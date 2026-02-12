@@ -13,37 +13,6 @@ export const lessonResourceLimits: Lesson = {
   successMessage:
     'You observed OOMKilled — the container exceeded its memory limit and was terminated by the kernel. ' +
     'This is why resource limits matter: they prevent one container from consuming all node memory and crashing everything else.',
-  hints: [
-    { text: 'Start by creating the deployment. Use "kubectl describe pod <name>" after reconciling to see why pods are failing.' },
-    { text: 'kubectl create deployment hungry-app --image=hungry-app:1.0', exact: true },
-    { text: 'The pods get OOMKilled — you need to change to a working image.' },
-    { text: 'kubectl set image deployment/hungry-app hungry-app=web-app:1.0', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Create the "hungry-app" Deployment',
-      check: (s: ClusterState) => !!s.deployments.find(d => d.metadata.name === 'hungry-app'),
-    },
-    {
-      description: 'Fix the OOMKill by changing the image to web-app:1.0',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'hungry-app');
-        return !!dep && dep.spec.template.spec.image !== 'hungry-app:1.0';
-      },
-    },
-    {
-      description: 'Both "web" and "hungry-app" deployments fully healthy',
-      check: (s: ClusterState) => {
-        const web = s.deployments.find(d => d.metadata.name === 'web');
-        const hungry = s.deployments.find(d => d.metadata.name === 'hungry-app');
-        if (!web || !hungry) return false;
-        return [web, hungry].every(dep => (dep.status.readyReplicas || 0) >= dep.spec.replicas);
-      },
-    },
-  ],
-  podFailureRules: {
-    'hungry-app:1.0': 'OOMKilled',
-  },
   lecture: {
     sections: [
       {
@@ -219,140 +188,424 @@ export const lessonResourceLimits: Lesson = {
         'that would be evicted first under node pressure. Most production clusters pair LimitRanges with ResourceQuotas in every namespace.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
-
-    const pods = Array.from({ length: 3 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image },
-      status: { phase: 'Running' as const },
-    }));
-
-    return {
-      deployments: [
+  practices: [
+    {
+      title: 'Diagnose and Fix OOMKilled',
+      goalDescription:
+        'Deploy "hungry-app" with image hungry-app:1.0 and observe pods getting OOMKilled (Out Of Memory). Diagnose the failure using describe, then fix it by switching to a working image (web-app:1.0). Both deployments must be healthy.',
+      successMessage:
+        'You observed OOMKilled — the container exceeded its memory limit and was terminated by the kernel. ' +
+        'This is why resource limits matter: they prevent one container from consuming all node memory and crashing everything else.',
+      hints: [
+        { text: 'Start by creating the deployment. Use "kubectl describe pod <name>" after reconciling to see why pods are failing.' },
+        { text: 'kubectl create deployment hungry-app --image=hungry-app:1.0', exact: true },
+        { text: 'The pods get OOMKilled — you need to change to a working image.' },
+        { text: 'kubectl set image deployment/hungry-app hungry-app=web-app:1.0', exact: true },
+      ],
+      goals: [
         {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'web',
-            uid: depUid,
-            labels: { app: 'web' },
-            creationTimestamp: Date.now() - 120000,
+          description: 'Use "kubectl create deployment" to deploy hungry-app',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-deployment'),
+        },
+        {
+          description: 'Use "kubectl describe pod" to diagnose the OOMKill',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-pod'),
+        },
+        {
+          description: 'Use "kubectl set image" to fix the image',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
+        },
+        {
+          description: 'Create the "hungry-app" Deployment',
+          check: (s: ClusterState) => !!s.deployments.find(d => d.metadata.name === 'hungry-app'),
+        },
+        {
+          description: 'Fix the OOMKill by changing the image to web-app:1.0',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'hungry-app');
+            return !!dep && dep.spec.template.spec.image !== 'hungry-app:1.0';
           },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web' },
-            template: {
-              labels: { app: 'web' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 3,
-            updatedReplicas: 3,
-            readyReplicas: 3,
-            availableReplicas: 3,
-            conditions: [{ type: 'Available', status: 'True' }],
+        },
+        {
+          description: 'Both "web" and "hungry-app" deployments fully healthy',
+          check: (s: ClusterState) => {
+            const web = s.deployments.find(d => d.metadata.name === 'web');
+            const hungry = s.deployments.find(d => d.metadata.name === 'hungry-app');
+            if (!web || !hungry) return false;
+            return [web, hungry].every(dep => (dep.status.readyReplicas || 0) >= dep.spec.replicas);
           },
         },
       ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
+      podFailureRules: {
+        'hungry-app:1.0': 'OOMKilled',
+      },
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `web-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'web', 'pod-template-hash': hash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'web',
-              uid: depUid,
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 3,
-            selector: { app: 'web', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'web', 'pod-template-hash': hash },
-              spec: { image },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web',
+                uid: depUid,
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'web' },
+                template: {
+                  labels: { app: 'web' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 3,
+                updatedReplicas: 3,
+                readyReplicas: 3,
+                availableReplicas: 3,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
             },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'web', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 3, readyReplicas: 3 },
+            },
+          ],
+          pods,
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-1',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-1' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 3 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 2,
+              },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-2',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-2' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 3 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+          ],
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state) => {
+        // Must have "hungry-app" deployment with image changed from hungry-app:1.0
+        const hungryApp = state.deployments.find((d) => d.metadata.name === 'hungry-app');
+        if (!hungryApp) return false;
+        if (hungryApp.spec.template.spec.image === 'hungry-app:1.0') return false;
+
+        // Both "web" and "hungry-app" must have readyReplicas >= spec.replicas
+        const web = state.deployments.find((d) => d.metadata.name === 'web');
+        if (!web) return false;
+
+        return [web, hungryApp].every((dep) => {
+          const readyReplicas = dep.status.readyReplicas || 0;
+          return readyReplicas >= dep.spec.replicas;
+        });
+      },
+    },
+    {
+      title: 'Set Resource Requests and Limits',
+      goalDescription:
+        'The "memory-hog" deployment has OOMKilled pods. Use describe to diagnose, then fix the image to "app:2.0". Observe that proper resource limits prevent runaway memory usage.',
+      successMessage:
+        'Fixing OOMKilled often means either increasing memory limits or fixing the memory leak. In this case, the image itself was the problem. Always set resource requests and limits to protect your cluster from noisy neighbors.',
+      podFailureRules: {
+        'memory-hog:1.0': 'OOMKilled',
+      },
+      hints: [
+        { text: 'Run "kubectl describe pod" on a memory-hog pod to see the OOMKilled status.' },
+        { text: 'The memory-hog image consumes too much memory. Fix it with set image.' },
+        { text: 'kubectl set image deployment/memory-hog app:2.0', exact: true },
+      ],
+      goals: [
+        {
+          description: 'Use "kubectl describe pod" to diagnose the OOMKilled pod',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-pod'),
+        },
+        {
+          description: 'Fix the memory-hog deployment image',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'memory-hog');
+            return !!dep && dep.spec.template.spec.image !== 'memory-hog:1.0';
           },
-          status: { replicas: 3, readyReplicas: 3 },
+        },
+        {
+          description: 'All pods Running',
+          check: (s: ClusterState) => s.deployments.every(d => (d.status.readyReplicas || 0) >= d.spec.replicas),
         },
       ],
-      pods,
-      nodes: [
-        {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-1',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-1' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 3 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 2,
-          },
-        },
-        {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-2',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-2' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 3 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 1,
-          },
-        },
-      ],
-      services: [],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    // Must have "hungry-app" deployment with image changed from hungry-app:1.0
-    const hungryApp = state.deployments.find((d) => d.metadata.name === 'hungry-app');
-    if (!hungryApp) return false;
-    if (hungryApp.spec.template.spec.image === 'hungry-app:1.0') return false;
+      initialState: () => {
+        // api-server deployment (healthy)
+        const apiDepUid = generateUID();
+        const apiRsUid = generateUID();
+        const apiImage = 'api:1.0';
+        const apiHash = templateHash({ image: apiImage });
 
-    // Both "web" and "hungry-app" must have readyReplicas >= spec.replicas
-    const web = state.deployments.find((d) => d.metadata.name === 'web');
-    if (!web) return false;
+        const apiPods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`api-server-${apiHash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'api-server', 'pod-template-hash': apiHash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `api-server-${apiHash.slice(0, 10)}`,
+              uid: apiRsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image: apiImage },
+          status: { phase: 'Running' as const },
+        }));
 
-    return [web, hungryApp].every((dep) => {
-      const readyReplicas = dep.status.readyReplicas || 0;
-      return readyReplicas >= dep.spec.replicas;
-    });
-  },
+        // memory-hog deployment (OOMKilled)
+        const hogDepUid = generateUID();
+        const hogRsUid = generateUID();
+        const hogImage = 'memory-hog:1.0';
+        const hogHash = templateHash({ image: hogImage });
+
+        const hogPods = Array.from({ length: 1 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`memory-hog-${hogHash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'memory-hog', 'pod-template-hash': hogHash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `memory-hog-${hogHash.slice(0, 10)}`,
+              uid: hogRsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image: hogImage },
+          status: { phase: 'Pending' as const, reason: 'OOMKilled', message: 'Container exceeded memory limit' },
+        }));
+
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'api-server',
+                uid: apiDepUid,
+                labels: { app: 'api-server' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'api-server' },
+                template: {
+                  labels: { app: 'api-server' },
+                  spec: { image: apiImage },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
+            },
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'memory-hog',
+                uid: hogDepUid,
+                labels: { app: 'memory-hog' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 1,
+                selector: { app: 'memory-hog' },
+                template: {
+                  labels: { app: 'memory-hog' },
+                  spec: { image: hogImage },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 1,
+                updatedReplicas: 0,
+                readyReplicas: 0,
+                availableReplicas: 0,
+                conditions: [],
+              },
+            },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `api-server-${apiHash.slice(0, 10)}`,
+                uid: apiRsUid,
+                labels: { app: 'api-server', 'pod-template-hash': apiHash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'api-server',
+                  uid: apiDepUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'api-server', 'pod-template-hash': apiHash },
+                template: {
+                  labels: { app: 'api-server', 'pod-template-hash': apiHash },
+                  spec: { image: apiImage },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
+            },
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `memory-hog-${hogHash.slice(0, 10)}`,
+                uid: hogRsUid,
+                labels: { app: 'memory-hog', 'pod-template-hash': hogHash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'memory-hog',
+                  uid: hogDepUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 1,
+                selector: { app: 'memory-hog', 'pod-template-hash': hogHash },
+                template: {
+                  labels: { app: 'memory-hog', 'pod-template-hash': hogHash },
+                  spec: { image: hogImage },
+                },
+              },
+              status: { replicas: 1, readyReplicas: 0 },
+            },
+          ],
+          pods: [...apiPods, ...hogPods],
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-1',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-1' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 2,
+              },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-2',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-2' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+          ],
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state) => {
+        return state.deployments.every((dep) => {
+          const readyReplicas = dep.status.readyReplicas || 0;
+          return readyReplicas >= dep.spec.replicas;
+        });
+      },
+    },
+  ],
 };

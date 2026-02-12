@@ -13,36 +13,6 @@ export const lessonScheduling: Lesson = {
   successMessage:
     'You\'ve mastered scheduling: cordon prevents placement, drain evicts pods, the RS recreates them, ' +
     'and the scheduler places them on healthy nodes.',
-  hints: [
-    { text: 'Use kubectl drain to evict all pods from a node and mark it unschedulable.' },
-    { text: 'kubectl drain node-3', exact: true },
-    { text: 'After pods are rescheduled to other nodes, restore node-3 with uncordon.' },
-    { text: 'kubectl uncordon node-3', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Drain node-3 (evict pods and mark unschedulable)',
-      check: (s: ClusterState) => {
-        const node = s.nodes.find(n => n.metadata.name === 'node-3');
-        return !!node && node.spec.unschedulable === true;
-      },
-    },
-    {
-      description: 'Uncordon node-3 (mark as schedulable again)',
-      check: (s: ClusterState) => {
-        const node = s.nodes.find(n => n.metadata.name === 'node-3');
-        return !!node && !node.spec.unschedulable;
-      },
-    },
-    {
-      description: 'All 6 pods Running across 3 schedulable nodes',
-      check: (s: ClusterState) => {
-        const running = s.pods.filter(p => p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
-        const schedulable = s.nodes.filter(n => !n.spec.unschedulable && n.status.conditions[0].status === 'True');
-        return running.length === 6 && schedulable.length === 3;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -213,115 +183,246 @@ export const lessonScheduling: Lesson = {
         'The pod would stay Pending. This is a fundamental concept: scheduling is based on reservations, not utilization. ' +
         'This can lead to situations where nodes appear underutilized but cannot accept new pods — a common source of confusion in capacity planning.',
     },
+    {
+      question:
+        'Node-2 becomes NotReady due to a network partition. It was running 3 pods from a Deployment with 6 replicas. What happens over the next few minutes?',
+      choices: [
+        'The 3 pods on node-2 continue running in isolation and rejoin the cluster when the network recovers',
+        'The Deployment reduces its desired count from 6 to 3 to match the remaining healthy capacity',
+        'The node lifecycle controller evicts the 3 pods, the RS creates 3 replacements, and the scheduler places them on healthy nodes (if capacity exists)',
+        'Kubernetes immediately migrates the 3 running pods from node-2 to healthy nodes via live migration',
+      ],
+      correctIndex: 2,
+      explanation:
+        'When a node becomes NotReady, the node lifecycle controller marks its pods for eviction. The ReplicaSet detects that it now has fewer pods than desired ' +
+        'and creates replacements. The scheduler places these new pods on healthy nodes — if those nodes have capacity. If remaining nodes are full, ' +
+        'the replacement pods stay Pending as Unschedulable. The desired count is never automatically reduced. ' +
+        'Kubernetes does not support live migration of pods — pods are always recreated, not moved.',
+    },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
+  practices: [
+    {
+      title: 'Drain and Restore a Node',
+      goalDescription:
+        'Drain node-3 to evict its pods, watch them reschedule on healthy nodes, then uncordon node-3 to restore the cluster. End state: 6 Running pods across 3 schedulable nodes.',
+      successMessage:
+        'You\'ve mastered scheduling: cordon prevents placement, drain evicts pods, the RS recreates them, and the scheduler places them on healthy nodes.',
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
 
-    const nodeNames = ['node-1', 'node-2', 'node-3'];
-    const nodes = nodeNames.map((name) => ({
-      kind: 'Node' as const,
-      metadata: {
-        name,
-        uid: generateUID(),
-        labels: { 'kubernetes.io/hostname': name },
-        creationTimestamp: Date.now() - 300000,
-      },
-      spec: { capacity: { pods: 3 } },
-      status: {
-        conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-        allocatedPods: 2,
-      },
-    }));
+        const nodeNames = ['node-1', 'node-2', 'node-3'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: { name, uid: generateUID(), labels: { 'kubernetes.io/hostname': name }, creationTimestamp: Date.now() - 300000 },
+          spec: { capacity: { pods: 3 } },
+          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 2 },
+        }));
 
-    // 2 pods per node = 6 total
-    const pods = nodeNames.flatMap((nodeName) =>
-      Array.from({ length: 2 }, () => ({
-        kind: 'Pod' as const,
-        metadata: {
-          name: generatePodName(`my-app-${hash.slice(0, 10)}`),
-          uid: generateUID(),
-          labels: { app: 'my-app', 'pod-template-hash': hash },
-          ownerReference: {
-            kind: 'ReplicaSet',
-            name: `my-app-${hash.slice(0, 10)}`,
-            uid: rsUid,
-          },
-          creationTimestamp: Date.now() - 60000,
-        },
-        spec: { image, nodeName },
-        status: { phase: 'Running' as const },
-      }))
-    );
-
-    return {
-      deployments: [
-        {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'my-app',
-            uid: depUid,
-            labels: { app: 'my-app' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 6,
-            selector: { app: 'my-app' },
-            template: {
-              labels: { app: 'my-app' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 6,
-            updatedReplicas: 6,
-            readyReplicas: 6,
-            availableReplicas: 6,
-            conditions: [{ type: 'Available', status: 'True' }],
-          },
-        },
-      ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
-          metadata: {
-            name: `my-app-${hash.slice(0, 10)}`,
-            uid: rsUid,
-            labels: { app: 'my-app', 'pod-template-hash': hash },
-            ownerReference: {
-              kind: 'Deployment',
-              name: 'my-app',
-              uid: depUid,
-            },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 6,
-            selector: { app: 'my-app', 'pod-template-hash': hash },
-            template: {
+        const pods = nodeNames.flatMap((nodeName) =>
+          Array.from({ length: 2 }, () => ({
+            kind: 'Pod' as const,
+            metadata: {
+              name: generatePodName(`my-app-${hash.slice(0, 10)}`), uid: generateUID(),
               labels: { app: 'my-app', 'pod-template-hash': hash },
-              spec: { image },
+              ownerReference: { kind: 'ReplicaSet', name: `my-app-${hash.slice(0, 10)}`, uid: rsUid },
+              creationTimestamp: Date.now() - 60000,
             },
+            spec: { image, nodeName },
+            status: { phase: 'Running' as const },
+          }))
+        );
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'my-app', uid: depUid, labels: { app: 'my-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 6, selector: { app: 'my-app' },
+              template: { labels: { app: 'my-app' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 6, updatedReplicas: 6, readyReplicas: 6, availableReplicas: 6, conditions: [{ type: 'Available', status: 'True' }] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `my-app-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'my-app', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'my-app', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 6, selector: { app: 'my-app', 'pod-template-hash': hash },
+              template: { labels: { app: 'my-app', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 6, readyReplicas: 6 },
+          }],
+          pods, nodes, services: [], events: [],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl drain" to evict pods from a node',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('drain'),
+        },
+        {
+          description: 'Use "kubectl uncordon" to restore the node',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('uncordon'),
+        },
+        {
+          description: 'Drain node-3 (evict pods and mark unschedulable)',
+          check: (s: ClusterState) => {
+            const node = s.nodes.find(n => n.metadata.name === 'node-3');
+            return !!node && node.spec.unschedulable === true;
           },
-          status: { replicas: 6, readyReplicas: 6 },
+        },
+        {
+          description: 'Uncordon node-3 (mark as schedulable again)',
+          check: (s: ClusterState) => {
+            const node = s.nodes.find(n => n.metadata.name === 'node-3');
+            return !!node && !node.spec.unschedulable;
+          },
+        },
+        {
+          description: 'All 6 pods Running across 3 schedulable nodes',
+          check: (s: ClusterState) => {
+            const running = s.pods.filter(p => p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+            const schedulable = s.nodes.filter(n => !n.spec.unschedulable && n.status.conditions[0].status === 'True');
+            return running.length === 6 && schedulable.length === 3;
+          },
         },
       ],
-      pods,
-      nodes,
-      services: [],
-      events: [],
-    };
-  },
-  goalCheck: (state) => {
-    const runningPods = state.pods.filter(
-      (p) => p.status.phase === 'Running' && !p.metadata.deletionTimestamp
-    );
-    const schedulableNodes = state.nodes.filter(
-      (n) => n.status.conditions[0].status === 'True' && !n.spec.unschedulable
-    );
-    return runningPods.length === 6 && schedulableNodes.length === 3;
-  },
+      hints: [
+        { text: 'Use kubectl drain to evict all pods from a node and mark it unschedulable.' },
+        { text: 'kubectl drain node-3', exact: true },
+        { text: 'After pods are rescheduled to other nodes, restore node-3 with uncordon.' },
+        { text: 'kubectl uncordon node-3', exact: true },
+      ],
+    },
+    {
+      title: 'Investigate Node Capacity',
+      goalDescription:
+        'Nodes are full and one is cordoned. Use describe node and get events to understand why pods are Pending, then uncordon node-3 to fix scheduling.',
+      successMessage:
+        'You diagnosed unschedulable pods by inspecting node capacity and events. When pods are Pending, always check node status first.',
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const nodes = [
+          { name: 'node-1', podCount: 3 },
+          { name: 'node-2', podCount: 3 },
+          { name: 'node-3', podCount: 0, cordoned: true },
+        ].map(({ name, podCount, cordoned }) => ({
+          kind: 'Node' as const,
+          metadata: { name, uid: generateUID(), labels: { 'kubernetes.io/hostname': name }, creationTimestamp: Date.now() - 300000 },
+          spec: { capacity: { pods: 3 }, ...(cordoned ? { unschedulable: true } : {}) },
+          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: podCount },
+        }));
+
+        // 3 pods on node-1, 3 on node-2
+        const runningPods = ['node-1', 'node-2'].flatMap(nodeName =>
+          Array.from({ length: 3 }, () => ({
+            kind: 'Pod' as const,
+            metadata: {
+              name: generatePodName(`my-app-${hash.slice(0, 10)}`), uid: generateUID(),
+              labels: { app: 'my-app', 'pod-template-hash': hash },
+              ownerReference: { kind: 'ReplicaSet', name: `my-app-${hash.slice(0, 10)}`, uid: rsUid },
+              creationTimestamp: Date.now() - 60000,
+            },
+            spec: { image, nodeName },
+            status: { phase: 'Running' as const },
+          }))
+        );
+
+        // 2 pending pods (unschedulable)
+        const pendingPods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`my-app-${hash.slice(0, 10)}`), uid: generateUID(),
+            labels: { app: 'my-app', 'pod-template-hash': hash },
+            ownerReference: { kind: 'ReplicaSet', name: `my-app-${hash.slice(0, 10)}`, uid: rsUid },
+            creationTimestamp: Date.now() - 10000,
+          },
+          spec: { image },
+          status: { phase: 'Pending' as const, reason: 'Unschedulable', message: '0/3 nodes are available: 2 nodes have reached pod capacity, 1 node is unschedulable' },
+        }));
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'my-app', uid: depUid, labels: { app: 'my-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 8, selector: { app: 'my-app' },
+              template: { labels: { app: 'my-app' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 8, updatedReplicas: 8, readyReplicas: 6, availableReplicas: 6, conditions: [{ type: 'Available', status: 'True' }] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `my-app-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'my-app', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'my-app', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 8, selector: { app: 'my-app', 'pod-template-hash': hash },
+              template: { labels: { app: 'my-app', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 8, readyReplicas: 6 },
+          }],
+          pods: [...runningPods, ...pendingPods],
+          nodes,
+          services: [],
+          events: [{
+            timestamp: Date.now() - 10000, tick: 0, type: 'Warning' as const, reason: 'FailedScheduling',
+            objectKind: 'Pod', objectName: 'my-app-pending',
+            message: '0/3 nodes are available: 2 nodes have reached pod capacity, 1 node is unschedulable',
+          }],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl describe node" to inspect node capacity',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-node'),
+        },
+        {
+          description: 'Use "kubectl get events" to see scheduling failures',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-events'),
+        },
+        {
+          description: 'Use "kubectl uncordon" to fix the scheduling issue',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('uncordon'),
+        },
+        {
+          description: 'Uncordon node-3 to restore scheduling',
+          check: (s: ClusterState) => {
+            const node = s.nodes.find(n => n.metadata.name === 'node-3');
+            return !!node && !node.spec.unschedulable;
+          },
+        },
+        {
+          description: 'All 8 pods Running',
+          check: (s: ClusterState) => {
+            const running = s.pods.filter(p => p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+            const pending = s.pods.filter(p => p.status.phase === 'Pending' && !p.metadata.deletionTimestamp);
+            return running.length === 8 && pending.length === 0;
+          },
+        },
+      ],
+      hints: [
+        { text: 'Run "kubectl describe node node-3" to see its status.' },
+        { text: 'Run "kubectl get events" to see the FailedScheduling warnings.' },
+        { text: 'node-3 is cordoned (unschedulable). Use uncordon to restore it.' },
+        { text: 'kubectl uncordon node-3', exact: true },
+      ],
+    },
+  ],
 };

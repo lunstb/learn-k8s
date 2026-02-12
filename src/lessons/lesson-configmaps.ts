@@ -13,26 +13,6 @@ export const lessonConfigMaps: Lesson = {
   successMessage:
     'You created the ConfigMap and the pods recovered! Pods that reference missing ConfigMaps enter CreateContainerConfigError. ' +
     'Always create ConfigMaps before deploying pods that depend on them.',
-  hints: [
-    { text: 'Run "kubectl get pods" to see the error status, then "kubectl describe pod <name>" to see exactly which ConfigMap is missing.' },
-    { text: 'The syntax is: kubectl create configmap <name> --from-literal=<key>=<value>' },
-    { text: 'kubectl create configmap app-config --from-literal=LOG_LEVEL=info', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Create ConfigMap "app-config" with key LOG_LEVEL=info',
-      check: (s: ClusterState) => {
-        const cm = s.configMaps.find(c => c.metadata.name === 'app-config');
-        return !!cm && cm.data['LOG_LEVEL'] !== undefined;
-      },
-    },
-    {
-      description: 'All "web" pods Running (no longer stuck)',
-      check: (s: ClusterState) => {
-        return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 2;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -196,137 +176,352 @@ export const lessonConfigMaps: Lesson = {
         'Since the application already watches for file changes, mounting the ConfigMap as a volume is the ideal approach. When you update the ConfigMap, the kubelet syncs the mounted files (with a brief delay), and the app detects and applies the change -- no restart needed. Option A would require a restart since env vars are immutable. Options B and D are manual, error-prone, and would be lost when pods are rescheduled. This is the main advantage of volume-mounted ConfigMaps when your app supports hot-reloading.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'nginx:1.0';
-    const hash = templateHash({ image });
-
-    const pods = Array.from({ length: 2 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
-      status: { phase: 'Pending' as const, reason: 'CreateContainerConfigError', message: 'configmap "app-config" not found' },
-    }));
-
-    return {
-      deployments: [
+  practices: [
+    {
+      title: 'Fix a Missing ConfigMap',
+      goalDescription:
+        'The "web" Deployment pods are stuck in CreateContainerConfigError because they reference a missing ConfigMap. Create a ConfigMap named "app-config" with the key LOG_LEVEL=info to fix them.',
+      successMessage:
+        'You created the ConfigMap and the pods recovered! Pods that reference missing ConfigMaps enter CreateContainerConfigError. ' +
+        'Always create ConfigMaps before deploying pods that depend on them.',
+      hints: [
+        { text: 'Run "kubectl get pods" to see the error status, then "kubectl describe pod <name>" to see exactly which ConfigMap is missing.' },
+        { text: 'The syntax is: kubectl create configmap <name> --from-literal=<key>=<value>' },
+        { text: 'kubectl create configmap app-config --from-literal=LOG_LEVEL=info', exact: true },
+      ],
+      goals: [
         {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'web',
-            uid: depUid,
-            labels: { app: 'web' },
-            creationTimestamp: Date.now() - 120000,
+          description: 'Create the missing ConfigMap',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-configmap'),
+        },
+        {
+          description: 'ConfigMap "app-config" has key LOG_LEVEL=info',
+          check: (s: ClusterState) => {
+            const cm = s.configMaps.find(c => c.metadata.name === 'app-config');
+            return !!cm && cm.data['LOG_LEVEL'] !== undefined;
           },
-          spec: {
-            replicas: 2,
-            selector: { app: 'web' },
-            template: {
-              labels: { app: 'web' },
-              spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 2,
-            updatedReplicas: 0,
-            readyReplicas: 0,
-            availableReplicas: 0,
-            conditions: [],
+        },
+        {
+          description: 'All "web" pods Running (no longer stuck)',
+          check: (s: ClusterState) => {
+            return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 2;
           },
         },
       ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `web-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'web', 'pod-template-hash': hash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'web',
-              uid: depUid,
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 2,
-            selector: { app: 'web', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'web', 'pod-template-hash': hash },
-              spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
-            },
-          },
-          status: { replicas: 2, readyReplicas: 0 },
-        },
-      ],
-      pods,
-      nodes: [
-        {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-1',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-1' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 5 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 1,
-          },
-        },
-        {
-          kind: 'Node' as const,
-          metadata: {
-            name: 'node-2',
-            uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': 'node-2' },
-            creationTimestamp: Date.now() - 300000,
-          },
-          spec: { capacity: { pods: 5 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 1,
-          },
-        },
-      ],
-      services: [],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    // ConfigMap must exist with correct key
-    const cm = state.configMaps.find((c) => c.metadata.name === 'app-config');
-    if (!cm) return false;
-    if (Object.keys(cm.data).length < 1) return false;
+          spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
+          status: { phase: 'Pending' as const, reason: 'CreateContainerConfigError', message: 'configmap "app-config" not found' },
+        }));
 
-    // Web pods must be Running
-    const webPods = state.pods.filter(
-      (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
-    );
-    return webPods.length >= 2;
-  },
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web',
+                uid: depUid,
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web' },
+                template: {
+                  labels: { app: 'web' },
+                  spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 0,
+                readyReplicas: 0,
+                availableReplicas: 0,
+                conditions: [],
+              },
+            },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web', 'pod-template-hash': hash },
+                  spec: { image, envFrom: [{ configMapRef: 'app-config' }] },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 0 },
+            },
+          ],
+          pods,
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-1',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-1' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-2',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-2' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+          ],
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state) => {
+        // ConfigMap must exist with correct key
+        const cm = state.configMaps.find((c) => c.metadata.name === 'app-config');
+        if (!cm) return false;
+        if (Object.keys(cm.data).length < 1) return false;
+
+        // Web pods must be Running
+        const webPods = state.pods.filter(
+          (p) => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+        );
+        return webPods.length >= 2;
+      },
+    },
+    {
+      title: 'Update a ConfigMap and Restart Pods',
+      goalDescription:
+        'The "app-settings" ConfigMap has LOG_LEVEL=warning. Update it to LOG_LEVEL=debug and FEATURE_FLAG=true, then restart the deployment so pods pick up the new values.',
+      successMessage:
+        'ConfigMap updated and pods restarted. Remember: environment variable changes from ConfigMaps require a pod restart. Volume-mounted ConfigMaps update automatically, but env vars are set at container start.',
+      hints: [
+        { text: 'To update a ConfigMap, delete and recreate it, or use kubectl apply with YAML.' },
+        { text: 'kubectl delete configmap app-settings && kubectl create configmap app-settings --from-literal=LOG_LEVEL=debug --from-literal=FEATURE_FLAG=true', exact: true },
+        { text: 'Environment variables from ConfigMaps are set at container start. You need to restart pods.' },
+        { text: 'kubectl rollout restart deployment/web', exact: true },
+      ],
+      goals: [
+        {
+          description: 'Update ConfigMap LOG_LEVEL to "debug"',
+          check: (s: ClusterState) => {
+            const cm = s.configMaps.find(c => c.metadata.name === 'app-settings');
+            return !!cm && cm.data['LOG_LEVEL'] === 'debug';
+          },
+        },
+        {
+          description: 'Update ConfigMap FEATURE_FLAG to "true"',
+          check: (s: ClusterState) => {
+            const cm = s.configMaps.find(c => c.metadata.name === 'app-settings');
+            return !!cm && cm.data['FEATURE_FLAG'] === 'true';
+          },
+        },
+        {
+          description: 'Restart the deployment with "kubectl rollout restart"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('rollout-restart'),
+        },
+        {
+          description: 'All "web" pods Running',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web');
+            return !!dep && (dep.status.readyReplicas || 0) >= 2;
+          },
+        },
+      ],
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'web', 'pod-template-hash': hash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image, envFrom: [{ configMapRef: 'app-settings' }] },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web',
+                uid: depUid,
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web' },
+                template: {
+                  labels: { app: 'web' },
+                  spec: { image, envFrom: [{ configMapRef: 'app-settings' }] },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
+            },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web', 'pod-template-hash': hash },
+                  spec: { image, envFrom: [{ configMapRef: 'app-settings' }] },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
+            },
+          ],
+          pods,
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-1',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-1' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+            {
+              kind: 'Node' as const,
+              metadata: {
+                name: 'node-2',
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': 'node-2' },
+                creationTimestamp: Date.now() - 300000,
+              },
+              spec: { capacity: { pods: 5 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 1,
+              },
+            },
+          ],
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [
+            {
+              kind: 'ConfigMap' as const,
+              metadata: {
+                name: 'app-settings',
+                uid: generateUID(),
+                labels: {},
+                creationTimestamp: Date.now() - 180000,
+              },
+              data: { LOG_LEVEL: 'warning', FEATURE_FLAG: 'false' },
+            },
+          ],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state) => {
+        const cm = state.configMaps.find((c) => c.metadata.name === 'app-settings');
+        if (!cm) return false;
+        if (cm.data['LOG_LEVEL'] !== 'debug' || cm.data['FEATURE_FLAG'] !== 'true') return false;
+
+        const dep = state.deployments.find((d) => d.metadata.name === 'web');
+        if (!dep) return false;
+        return (dep.status.readyReplicas || 0) >= 2;
+      },
+    },
+  ],
 };

@@ -12,70 +12,6 @@ export const lessonStartupShutdown: Lesson = {
     'First observe a slow-starting app get killed by its liveness probe. Then add a startup probe to fix it. The pod should start successfully.',
   successMessage:
     'The startup probe protected the slow-starting container from premature liveness kills. The pod started successfully and became ready.',
-  yamlTemplate: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: slow-app
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: slow-app
-  template:
-    metadata:
-      labels:
-        app: slow-app
-    spec:
-      containers:
-      - name: slow-app
-        image: slow-start:1.0
-        startupProbe:
-          httpGet:
-            path: /healthz
-            port: 8080
-          failureThreshold: 10
-          periodSeconds: 2
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8080
-          periodSeconds: 5
-          failureThreshold: 3`,
-  hints: [
-    { text: 'First observe the problem: run `kubectl get pods` and watch the slow-app-broken pod get killed.' },
-    { text: 'The broken deployment has a liveness probe but no startup probe — the app needs 6+ ticks to start.' },
-    { text: 'Delete the broken deployment: `kubectl delete deployment slow-app-broken`' },
-    { text: 'Apply the YAML from the editor — it has a startup probe with failureThreshold=10 and periodSeconds=2.' },
-  ],
-  goals: [
-    {
-      description: 'Observe broken pod get killed by liveness probe',
-      check: (s: ClusterState) => {
-        // The broken pod has been restarted at least once
-        return s.pods.some(
-          (p) => p.metadata.labels['app'] === 'slow-app-broken' && (p.status.restartCount || 0) >= 1
-        );
-      },
-    },
-    {
-      description: 'Deploy slow-app with startup probe',
-      check: (s: ClusterState) => {
-        return s.deployments.some((d) => d.metadata.name === 'slow-app');
-      },
-    },
-    {
-      description: 'slow-app pod starts successfully (Running and ready)',
-      check: (s: ClusterState) => {
-        return s.pods.some(
-          (p) =>
-            p.metadata.labels['app'] === 'slow-app' &&
-            p.status.phase === 'Running' &&
-            p.status.ready === true &&
-            !p.metadata.deletionTimestamp
-        );
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -260,163 +196,386 @@ spec:
         'The fix is to add a preStop hook with a short sleep (e.g., 5 seconds) to delay SIGTERM until endpoint removal has propagated: preStop: {exec: {command: ["sleep", "5"]}}.',
     },
   ],
-  initialState: () => {
-    // Pre-populate with a "broken" deployment that has no startup probe
-    // The slow-starting image will get killed by liveness before it finishes starting
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'slow-start:1.0';
-    const hash = templateHash({ image });
-
-    const podName = generatePodName(`slow-app-broken-${hash.slice(0, 10)}`);
-    const pods = [
-      {
-        kind: 'Pod' as const,
-        metadata: {
-          name: podName,
-          uid: generateUID(),
-          labels: { app: 'slow-app-broken', 'pod-template-hash': hash },
-          ownerReference: { kind: 'ReplicaSet', name: `slow-app-broken-${hash.slice(0, 10)}`, uid: rsUid },
-          creationTimestamp: Date.now() - 60000,
+  practices: [
+    {
+      title: 'Fix a Slow-Starting App',
+      goalDescription:
+        'First observe a slow-starting app get killed by its liveness probe. Then add a startup probe to fix it. The pod should start successfully.',
+      successMessage:
+        'The startup probe protected the slow-starting container from premature liveness kills. The pod started successfully and became ready.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slow-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slow-app
+  template:
+    metadata:
+      labels:
+        app: slow-app
+    spec:
+      containers:
+      - name: slow-app
+        image: slow-start:1.0
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          failureThreshold: 10
+          periodSeconds: 2
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 3`,
+      hints: [
+        { text: 'First observe the problem: run `kubectl get pods` and watch the slow-app-broken pod get killed.' },
+        { text: 'The broken deployment has a liveness probe but no startup probe — the app needs 6+ ticks to start.' },
+        { text: 'Delete the broken deployment: `kubectl delete deployment slow-app-broken`' },
+        { text: 'Apply the YAML from the editor — it has a startup probe with failureThreshold=10 and periodSeconds=2.' },
+      ],
+      goals: [
+        {
+          description: 'Apply YAML to deploy slow-app with startup probe',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
         },
-        spec: {
-          image,
-          nodeName: 'node-1',
-          livenessProbe: {
-            type: 'httpGet' as const,
-            path: '/healthz',
-            port: 8080,
-            periodSeconds: 2,
-            failureThreshold: 3,
+        {
+          description: 'Observe broken pod get killed by liveness probe',
+          check: (s: ClusterState) => {
+            // The broken pod has been restarted at least once
+            return s.pods.some(
+              (p) => p.metadata.labels['app'] === 'slow-app-broken' && (p.status.restartCount || 0) >= 1
+            );
           },
         },
-        // Start as Running but will be killed by afterTick liveness simulation
-        status: { phase: 'Running' as const, ready: false, tickCreated: -1 },
+        {
+          description: 'Deploy slow-app with startup probe',
+          check: (s: ClusterState) => {
+            return s.deployments.some((d) => d.metadata.name === 'slow-app');
+          },
+        },
+        {
+          description: 'slow-app pod starts successfully (Running and ready)',
+          check: (s: ClusterState) => {
+            return s.pods.some(
+              (p) =>
+                p.metadata.labels['app'] === 'slow-app' &&
+                p.status.phase === 'Running' &&
+                p.status.ready === true &&
+                !p.metadata.deletionTimestamp
+            );
+          },
+        },
+      ],
+      initialState: () => {
+        // Pre-populate with a "broken" deployment that has no startup probe
+        // The slow-starting image will get killed by liveness before it finishes starting
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'slow-start:1.0';
+        const hash = templateHash({ image });
+
+        const podName = generatePodName(`slow-app-broken-${hash.slice(0, 10)}`);
+        const pods = [
+          {
+            kind: 'Pod' as const,
+            metadata: {
+              name: podName,
+              uid: generateUID(),
+              labels: { app: 'slow-app-broken', 'pod-template-hash': hash },
+              ownerReference: { kind: 'ReplicaSet', name: `slow-app-broken-${hash.slice(0, 10)}`, uid: rsUid },
+              creationTimestamp: Date.now() - 60000,
+            },
+            spec: {
+              image,
+              nodeName: 'node-1',
+              livenessProbe: {
+                type: 'httpGet' as const,
+                path: '/healthz',
+                port: 8080,
+                periodSeconds: 2,
+                failureThreshold: 3,
+              },
+            },
+            // Start as Running but will be killed by afterTick liveness simulation
+            status: { phase: 'Running' as const, ready: false, tickCreated: -1 },
+          },
+        ];
+
+        return {
+          pods,
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: { name: 'slow-app-broken', uid: depUid, labels: { app: 'slow-app-broken' }, creationTimestamp: Date.now() - 120000 },
+              spec: {
+                replicas: 1,
+                selector: { app: 'slow-app-broken' },
+                template: {
+                  labels: { app: 'slow-app-broken', 'pod-template-hash': hash },
+                  spec: {
+                    image,
+                    livenessProbe: {
+                      type: 'httpGet' as const,
+                      path: '/healthz',
+                      port: 8080,
+                      periodSeconds: 2,
+                      failureThreshold: 3,
+                    },
+                  },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: { replicas: 1, updatedReplicas: 1, readyReplicas: 0, availableReplicas: 0, conditions: [] },
+            },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `slow-app-broken-${hash.slice(0, 10)}`, uid: rsUid,
+                labels: { app: 'slow-app-broken', 'pod-template-hash': hash },
+                ownerReference: { kind: 'Deployment', name: 'slow-app-broken', uid: depUid },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 1, selector: { app: 'slow-app-broken', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'slow-app-broken', 'pod-template-hash': hash },
+                  spec: {
+                    image,
+                    livenessProbe: {
+                      type: 'httpGet' as const,
+                      path: '/healthz',
+                      port: 8080,
+                      periodSeconds: 2,
+                      failureThreshold: 3,
+                    },
+                  },
+                },
+              },
+              status: { replicas: 1, readyReplicas: 0 },
+            },
+          ],
+          nodes: [
+            {
+              kind: 'Node' as const,
+              metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+              spec: { capacity: { pods: 10 } },
+              status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+            },
+          ],
+          services: [],
+          events: [],
+        };
       },
-    ];
+      afterTick: (tick, state) => {
+        // Simulate liveness probe killing slow-starting pods (no startup probe)
+        for (const pod of state.pods) {
+          if (pod.metadata.labels['app'] === 'slow-app-broken' && pod.status.phase === 'Running' && !pod.metadata.deletionTimestamp) {
+            // The "slow start" app needs 8+ ticks to become ready
+            // With liveness periodSeconds=2 and failureThreshold=3, it gets killed at tick ~6
+            const age = tick - (pod.status.tickCreated || 0);
+            if (age >= 6 && !pod.status.ready) {
+              // Liveness probe kills the container
+              pod.status.phase = 'CrashLoopBackOff';
+              pod.status.reason = 'CrashLoopBackOff';
+              pod.status.message = 'Liveness probe failed: container killed before startup completed';
+              pod.status.restartCount = (pod.status.restartCount || 0) + 1;
+              if (!pod.spec.logs) pod.spec.logs = [];
+              pod.spec.logs.push(`[liveness] Probe failed — container killed (app was still starting)`);
+              state.events.push({
+                timestamp: Date.now(), tick, type: 'Warning', reason: 'Unhealthy',
+                objectKind: 'Pod', objectName: pod.metadata.name,
+                message: `Liveness probe failed: container killed before startup completed (restart #${pod.status.restartCount})`,
+              });
+            }
+          }
 
-    return {
-      pods,
-      deployments: [
+          // Slow-app with startup probe: becomes ready after startup probe threshold
+          if (pod.metadata.labels['app'] === 'slow-app' && pod.status.phase === 'Running' && !pod.metadata.deletionTimestamp) {
+            const age = tick - (pod.status.tickCreated || 0);
+            // Simulate slow start: the app becomes ready after 8 ticks
+            if (age >= 8 && !pod.status.ready) {
+              pod.status.startupProbeCompleted = true;
+              pod.status.ready = true;
+              if (!pod.spec.logs) pod.spec.logs = [];
+              pod.spec.logs.push(`[app] Application initialization complete — ready to serve`);
+            }
+          }
+        }
+        return state;
+      },
+      goalCheck: (state: ClusterState) => {
+        // Goal 1: broken pod has been restarted
+        const brokenRestarted = state.pods.some(
+          (p) => p.metadata.labels['app'] === 'slow-app-broken' && (p.status.restartCount || 0) >= 1
+        );
+
+        // Goal 2: slow-app deployment exists
+        const hasSlowApp = state.deployments.some((d) => d.metadata.name === 'slow-app');
+
+        // Goal 3: slow-app pod is running and ready
+        const slowAppReady = state.pods.some(
+          (p) =>
+            p.metadata.labels['app'] === 'slow-app' &&
+            p.status.phase === 'Running' &&
+            p.status.ready === true &&
+            !p.metadata.deletionTimestamp
+        );
+
+        return brokenRestarted && hasSlowApp && slowAppReady;
+      },
+    },
+    {
+      title: 'Configure a Graceful Shutdown',
+      goalDescription:
+        'The "api-server" deployment handles long-running requests. Apply a YAML update that adds terminationGracePeriodSeconds: 45 to ensure in-flight requests complete before shutdown.',
+      successMessage:
+        'In production, graceful shutdown prevents 502 errors during rolling updates. The preStop hook gives time for load balancers to drain connections, and terminationGracePeriodSeconds sets the hard deadline.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api-server
+  template:
+    metadata:
+      labels:
+        app: api-server
+    spec:
+      terminationGracePeriodSeconds: ???
+      containers:
+      - name: api-server
+        image: api:1.0`,
+      hints: [
+        { text: 'Switch to the YAML Editor tab and fill in terminationGracePeriodSeconds: 45' },
+        { text: 'Click Apply (or Ctrl+Enter) to update the deployment.' },
+      ],
+      goals: [
         {
-          kind: 'Deployment' as const,
-          metadata: { name: 'slow-app-broken', uid: depUid, labels: { app: 'slow-app-broken' }, creationTimestamp: Date.now() - 120000 },
-          spec: {
-            replicas: 1,
-            selector: { app: 'slow-app-broken' },
-            template: {
-              labels: { app: 'slow-app-broken', 'pod-template-hash': hash },
-              spec: {
-                image,
-                livenessProbe: {
-                  type: 'httpGet' as const,
-                  path: '/healthz',
-                  port: 8080,
-                  periodSeconds: 2,
-                  failureThreshold: 3,
-                },
-              },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+          description: 'Apply YAML to update the deployment',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'All "api-server" pods Running',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'api-server');
+            return !!dep && (dep.status.readyReplicas || 0) >= 3;
           },
-          status: { replicas: 1, updatedReplicas: 1, readyReplicas: 0, availableReplicas: 0, conditions: [] },
         },
       ],
-      replicaSets: [
-        {
-          kind: 'ReplicaSet' as const,
-          metadata: {
-            name: `slow-app-broken-${hash.slice(0, 10)}`, uid: rsUid,
-            labels: { app: 'slow-app-broken', 'pod-template-hash': hash },
-            ownerReference: { kind: 'Deployment', name: 'slow-app-broken', uid: depUid },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 1, selector: { app: 'slow-app-broken', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'slow-app-broken', 'pod-template-hash': hash },
-              spec: {
-                image,
-                livenessProbe: {
-                  type: 'httpGet' as const,
-                  path: '/healthz',
-                  port: 8080,
-                  periodSeconds: 2,
-                  failureThreshold: 3,
-                },
-              },
-            },
-          },
-          status: { replicas: 1, readyReplicas: 0 },
-        },
-      ],
-      nodes: [
-        {
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'api:1.0';
+        const hash = templateHash({ image });
+
+        const nodeNames = ['node-1', 'node-2'];
+        const nodes = nodeNames.map((name) => ({
           kind: 'Node' as const,
-          metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
           spec: { capacity: { pods: 10 } },
-          status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
-        },
-      ],
-      services: [],
-      events: [],
-    };
-  },
-  afterTick: (tick, state) => {
-    // Simulate liveness probe killing slow-starting pods (no startup probe)
-    for (const pod of state.pods) {
-      if (pod.metadata.labels['app'] === 'slow-app-broken' && pod.status.phase === 'Running' && !pod.metadata.deletionTimestamp) {
-        // The "slow start" app needs 8+ ticks to become ready
-        // With liveness periodSeconds=2 and failureThreshold=3, it gets killed at tick ~6
-        const age = tick - (pod.status.tickCreated || 0);
-        if (age >= 6 && !pod.status.ready) {
-          // Liveness probe kills the container
-          pod.status.phase = 'CrashLoopBackOff';
-          pod.status.reason = 'CrashLoopBackOff';
-          pod.status.message = 'Liveness probe failed: container killed before startup completed';
-          pod.status.restartCount = (pod.status.restartCount || 0) + 1;
-          if (!pod.spec.logs) pod.spec.logs = [];
-          pod.spec.logs.push(`[liveness] Probe failed — container killed (app was still starting)`);
-          state.events.push({
-            timestamp: Date.now(), tick, type: 'Warning', reason: 'Unhealthy',
-            objectKind: 'Pod', objectName: pod.metadata.name,
-            message: `Liveness probe failed: container killed before startup completed (restart #${pod.status.restartCount})`,
-          });
-        }
-      }
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 2,
+          },
+        }));
 
-      // Slow-app with startup probe: becomes ready after startup probe threshold
-      if (pod.metadata.labels['app'] === 'slow-app' && pod.status.phase === 'Running' && !pod.metadata.deletionTimestamp) {
-        const age = tick - (pod.status.tickCreated || 0);
-        // Simulate slow start: the app becomes ready after 8 ticks
-        if (age >= 8 && !pod.status.ready) {
-          pod.status.startupProbeCompleted = true;
-          pod.status.ready = true;
-          if (!pod.spec.logs) pod.spec.logs = [];
-          pod.spec.logs.push(`[app] Application initialization complete — ready to serve`);
-        }
-      }
-    }
-    return state;
-  },
-  goalCheck: (state: ClusterState) => {
-    // Goal 1: broken pod has been restarted
-    const brokenRestarted = state.pods.some(
-      (p) => p.metadata.labels['app'] === 'slow-app-broken' && (p.status.restartCount || 0) >= 1
-    );
+        const pods = Array.from({ length: 3 }, (_, i) => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`api-server-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'api-server', 'pod-template-hash': hash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `api-server-${hash.slice(0, 10)}`,
+              uid: rsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image, nodeName: nodeNames[i % 2] },
+          status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
+        }));
 
-    // Goal 2: slow-app deployment exists
-    const hasSlowApp = state.deployments.some((d) => d.metadata.name === 'slow-app');
-
-    // Goal 3: slow-app pod is running and ready
-    const slowAppReady = state.pods.some(
-      (p) =>
-        p.metadata.labels['app'] === 'slow-app' &&
-        p.status.phase === 'Running' &&
-        p.status.ready === true &&
-        !p.metadata.deletionTimestamp
-    );
-
-    return brokenRestarted && hasSlowApp && slowAppReady;
-  },
+        return {
+          pods,
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `api-server-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'api-server', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'api-server',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'api-server', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'api-server', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 3, readyReplicas: 3 },
+            },
+          ],
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'api-server',
+                uid: depUid,
+                labels: { app: 'api-server' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'api-server' },
+                template: {
+                  labels: { app: 'api-server' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 3,
+                updatedReplicas: 3,
+                readyReplicas: 3,
+                availableReplicas: 3,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
+            },
+          ],
+          nodes,
+          services: [],
+          events: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        const applied = (state._commandsUsed ?? []).includes('apply');
+        const dep = state.deployments.find((d) => d.metadata.name === 'api-server');
+        const hasEnoughReplicas = !!dep && (dep.status.readyReplicas || 0) >= 3;
+        return applied && hasEnoughReplicas;
+      },
+    },
+  ],
 };

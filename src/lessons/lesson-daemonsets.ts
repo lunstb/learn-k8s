@@ -13,43 +13,6 @@ export const lessonDaemonSets: Lesson = {
   successMessage:
     'The DaemonSet is running one log-collector pod on every node. DaemonSets automatically adapt to cluster changes — ' +
     'when a new node joins, a pod is created; when a node leaves, the pod is cleaned up.',
-  yamlTemplate: `apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: log-collector
-spec:
-  selector:
-    matchLabels:
-      app: log-collector
-  template:
-    metadata:
-      labels:
-        app: log-collector
-    spec:
-      containers:
-      - name: log-collector
-        image: ???`,
-  hints: [
-    { text: 'Switch to the YAML Editor tab — fill in the image as "fluentd:latest". DaemonSets don\'t need replicas — one pod runs per node automatically.' },
-    { text: 'Or use the terminal: kubectl create daemonset log-collector --image=fluentd:latest', exact: false },
-    { text: 'Reconcile multiple times until pods transition from Pending to Running on all nodes.' },
-  ],
-  goals: [
-    {
-      description: 'Create a DaemonSet named "log-collector"',
-      check: (s: ClusterState) => !!s.daemonSets.find(ds => ds.metadata.name === 'log-collector'),
-    },
-    {
-      description: 'One Running pod on every Ready node',
-      check: (s: ClusterState) => {
-        const readyNodes = s.nodes.filter(n => n.status.conditions[0].status === 'True');
-        if (readyNodes.length === 0) return false;
-        const runningPods = s.pods.filter(p => p.metadata.labels['app'] === 'log-collector' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
-        const coveredNodes = new Set(runningPods.map(p => p.spec.nodeName));
-        return readyNodes.every(n => coveredNodes.has(n.metadata.name));
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -188,61 +151,116 @@ spec:
         'Node affinity is the correct, explicit way to say "run only on these specific nodes."',
     },
   ],
-  initialState: () => {
-    const nodeNames = ['node-1', 'node-2', 'node-3'];
-    const nodes = nodeNames.map((name) => ({
-      kind: 'Node' as const,
-      metadata: {
-        name,
-        uid: generateUID(),
-        labels: { 'kubernetes.io/hostname': name },
-        creationTimestamp: Date.now() - 300000,
+  practices: [
+    {
+      title: 'Deploy a DaemonSet',
+      goalDescription:
+        'Create a DaemonSet named "log-collector" with image fluentd:latest. Verify one pod runs on each node in the cluster.',
+      successMessage:
+        'The DaemonSet is running one log-collector pod on every node. DaemonSets automatically adapt to cluster changes — ' +
+        'when a new node joins, a pod is created; when a node leaves, the pod is cleaned up.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: log-collector
+spec:
+  selector:
+    matchLabels:
+      app: log-collector
+  template:
+    metadata:
+      labels:
+        app: log-collector
+    spec:
+      containers:
+      - name: log-collector
+        image: ???`,
+      hints: [
+        { text: 'Switch to the YAML Editor tab — fill in the image as "fluentd:latest". DaemonSets don\'t need replicas — one pod runs per node automatically.' },
+        { text: 'Or use the terminal: kubectl create daemonset log-collector --image=fluentd:latest', exact: false },
+        { text: 'Reconcile multiple times until pods transition from Pending to Running on all nodes.' },
+      ],
+      goals: [
+        {
+          description: 'Use "kubectl create daemonset" or "kubectl apply" to create the DaemonSet',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-daemonset') || (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'Use "kubectl get pods" to verify pod placement',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
+        },
+        {
+          description: 'Create a DaemonSet named "log-collector"',
+          check: (s: ClusterState) => !!s.daemonSets.find(ds => ds.metadata.name === 'log-collector'),
+        },
+        {
+          description: 'One Running pod on every Ready node',
+          check: (s: ClusterState) => {
+            const readyNodes = s.nodes.filter(n => n.status.conditions[0].status === 'True');
+            if (readyNodes.length === 0) return false;
+            const runningPods = s.pods.filter(p => p.metadata.labels['app'] === 'log-collector' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+            const coveredNodes = new Set(runningPods.map(p => p.spec.nodeName));
+            return readyNodes.every(n => coveredNodes.has(n.metadata.name));
+          },
+        },
+      ],
+      initialState: () => {
+        const nodeNames = ['node-1', 'node-2', 'node-3'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: { capacity: { pods: 4 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 0,
+          },
+        }));
+
+        return {
+          pods: [],
+          replicaSets: [],
+          deployments: [],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
       },
-      spec: { capacity: { pods: 4 } },
-      status: {
-        conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-        allocatedPods: 0,
+      goalCheck: (state: ClusterState) => {
+        if (state.daemonSets.length < 1) return false;
+
+        const ds = state.daemonSets.find((d) => d.metadata.name === 'log-collector');
+        if (!ds) return false;
+
+        const readyNodes = state.nodes.filter(
+          (n) => n.status.conditions[0].status === 'True'
+        );
+
+        const runningDsPods = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'log-collector' &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
+
+        // One running pod per ready node
+        const coveredNodes = new Set(runningDsPods.map((p) => p.spec.nodeName));
+        return readyNodes.every((n) => coveredNodes.has(n.metadata.name));
       },
-    }));
-
-    return {
-      pods: [],
-      replicaSets: [],
-      deployments: [],
-      nodes,
-      services: [],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    if (state.daemonSets.length < 1) return false;
-
-    const ds = state.daemonSets.find((d) => d.metadata.name === 'log-collector');
-    if (!ds) return false;
-
-    const readyNodes = state.nodes.filter(
-      (n) => n.status.conditions[0].status === 'True'
-    );
-
-    const runningDsPods = state.pods.filter(
-      (p) =>
-        p.metadata.labels['app'] === 'log-collector' &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
-
-    // One running pod per ready node
-    const coveredNodes = new Set(runningDsPods.map((p) => p.spec.nodeName));
-    return readyNodes.every((n) => coveredNodes.has(n.metadata.name));
-  },
+    },
+  ],
 };

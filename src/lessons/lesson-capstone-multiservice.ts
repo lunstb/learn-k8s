@@ -13,53 +13,6 @@ export const lessonCapstoneMultiservice: Lesson = {
   successMessage:
     'Congratulations! You diagnosed and fixed: missing ConfigMap dependency, CrashLoopBackOff from bad image, ' +
     'wrong selector on cache-svc, and under-scaled frontend. These are the real-world failure modes you\'ll encounter in production.',
-  hints: [
-    { text: 'Start with kubectl get pods to see which pods are failing and why.' },
-    { text: 'API pods show CreateContainerConfigError — they need a ConfigMap called "api-config".' },
-    { text: 'kubectl create configmap api-config --from-literal=DB_HOST=database', exact: true },
-    { text: 'Worker pods are in CrashLoopBackOff — check the image name with kubectl describe.' },
-    { text: 'kubectl set image deployment/worker worker=worker:1.0', exact: true },
-    { text: 'The cache-svc has 0 endpoints — its selector doesn\'t match the cache pod labels.' },
-    { text: 'kubectl patch service cache-svc --selector=app=cache', exact: true },
-  ],
-  goals: [
-    {
-      description: 'Create the missing "api-config" ConfigMap so API pods can start',
-      check: (s: ClusterState) => {
-        return s.configMaps.some(cm => cm.metadata.name === 'api-config');
-      },
-    },
-    {
-      description: 'Fix the worker image typo ("workerr:1.0" → "worker:1.0")',
-      check: (s: ClusterState) => {
-        const worker = s.deployments.find(d => d.metadata.name === 'worker');
-        return !!worker && worker.spec.template.spec.image === 'worker:1.0';
-      },
-    },
-    {
-      description: 'Fix cache-svc selector to match cache pods (app=cache)',
-      check: (s: ClusterState) => {
-        const svc = s.services.find(svc => svc.metadata.name === 'cache-svc');
-        return !!svc && svc.spec.selector['app'] === 'cache' && svc.status.endpoints.length > 0;
-      },
-    },
-    {
-      description: 'Scale frontend to 3 replicas',
-      check: (s: ClusterState) => {
-        const frontend = s.deployments.find(d => d.metadata.name === 'frontend');
-        const frontendPods = s.pods.filter(
-          p => p.metadata.labels['app'] === 'frontend' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
-        );
-        return !!frontend && frontend.spec.replicas >= 3 && frontendPods.length >= 3;
-      },
-    },
-    {
-      description: 'All services have endpoints',
-      check: (s: ClusterState) => {
-        return s.services.every(svc => svc.status.endpoints.length > 0);
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -226,369 +179,449 @@ export const lessonCapstoneMultiservice: Lesson = {
         'The combination of traces + logs is the standard approach for post-incident request-level debugging.',
     },
   ],
-  podFailureRules: {
-    'workerr:1.0': 'CrashLoopBackOff',
-  },
-  initialState: () => {
-    // --- Frontend Deployment (1 replica running, needs scaling to 3) ---
-    const frontendImage = 'nginx:1.21';
-    const frontendHash = templateHash({ image: frontendImage });
-    const frontendDepUid = generateUID();
-    const frontendRsUid = generateUID();
-
-    const frontendPods = Array.from({ length: 1 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`frontend-${frontendHash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'frontend', 'pod-template-hash': frontendHash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `frontend-${frontendHash.slice(0, 10)}`,
-          uid: frontendRsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image: frontendImage, nodeName: 'node-1' },
-      status: { phase: 'Running' as const, tickCreated: 0 },
-    }));
-
-    // --- API Deployment (2 replicas, stuck on missing ConfigMap) ---
-    const apiImage = 'api:2.0';
-    const apiHash = templateHash({ image: apiImage });
-    const apiDepUid = generateUID();
-    const apiRsUid = generateUID();
-
-    const apiPods = Array.from({ length: 2 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`api-${apiHash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'api', 'pod-template-hash': apiHash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `api-${apiHash.slice(0, 10)}`,
-          uid: apiRsUid,
-        },
-        creationTimestamp: Date.now() - 30000,
-      },
-      spec: {
-        image: apiImage,
-        nodeName: 'node-1',
-        envFrom: [{ configMapRef: 'api-config' }],
-      },
-      status: {
-        phase: 'Pending' as const,
-        reason: 'CreateContainerConfigError',
-        message: 'configmap "api-config" not found',
-      },
-    }));
-
-    // --- Worker Deployment (2 replicas, bad image causing CrashLoopBackOff) ---
-    const workerBadImage = 'workerr:1.0'; // typo!
-    const workerHash = templateHash({ image: workerBadImage });
-    const workerDepUid = generateUID();
-    const workerRsUid = generateUID();
-
-    const workerPods = Array.from({ length: 2 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`worker-${workerHash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'worker', 'pod-template-hash': workerHash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `worker-${workerHash.slice(0, 10)}`,
-          uid: workerRsUid,
-        },
-        creationTimestamp: Date.now() - 30000,
-      },
-      spec: {
-        image: workerBadImage,
-        nodeName: 'node-2',
-        failureMode: 'CrashLoopBackOff' as const,
-      },
-      status: {
-        phase: 'CrashLoopBackOff' as const,
-        reason: 'CrashLoopBackOff',
-        message: 'Back-off restarting failed container',
-        restartCount: 3,
-      },
-    }));
-
-    // --- Cache pod (running, but service has wrong selector) ---
-    const cacheImage = 'redis:7.0';
-    const cachePod = {
-      kind: 'Pod' as const,
-      metadata: {
-        name: 'cache-0',
-        uid: generateUID(),
-        labels: { app: 'cache' },
-        creationTimestamp: Date.now() - 120000,
-      },
-      spec: { image: cacheImage, nodeName: 'node-2' },
-      status: { phase: 'Running' as const, tickCreated: 0 },
-    };
-
-    // --- Nodes (all healthy, no cordoned nodes) ---
-    const nodeNames = ['node-1', 'node-2', 'node-3'];
-    const nodes = nodeNames.map((name) => ({
-      kind: 'Node' as const,
-      metadata: {
-        name,
-        uid: generateUID(),
-        labels: { 'kubernetes.io/hostname': name },
-        creationTimestamp: Date.now() - 300000,
-      },
-      spec: { capacity: { pods: 6 } },
-      status: {
-        conditions: [{
-          type: 'Ready' as const,
-          status: 'True' as 'True' | 'False',
-        }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-        allocatedPods: name === 'node-1' ? 3 : name === 'node-2' ? 3 : 0,
-      },
-    }));
-
-    return {
-      pods: [...frontendPods, ...apiPods, ...workerPods, cachePod],
-      replicaSets: [
+  practices: [
+    {
+      title: 'Fix a Multi-Service Application',
+      goalDescription:
+        'Fix all issues: create the missing "api-config" ConfigMap so API pods can start, fix the worker image ("workerr:1.0" should be "worker:1.0"), patch the cache-svc selector (app=redis-cache should be app=cache), and scale frontend to 3 replicas.',
+      successMessage:
+        'Congratulations! You diagnosed and fixed: missing ConfigMap dependency, CrashLoopBackOff from bad image, ' +
+        'wrong selector on cache-svc, and under-scaled frontend. These are the real-world failure modes you\'ll encounter in production.',
+      hints: [
+        { text: 'Start with kubectl get pods to see which pods are failing and why.' },
+        { text: 'API pods show CreateContainerConfigError — they need a ConfigMap called "api-config".' },
+        { text: 'kubectl create configmap api-config --from-literal=DB_HOST=database', exact: true },
+        { text: 'Worker pods are in CrashLoopBackOff — check the image name with kubectl describe.' },
+        { text: 'kubectl set image deployment/worker worker=worker:1.0', exact: true },
+        { text: 'The cache-svc has 0 endpoints — its selector doesn\'t match the cache pod labels.' },
+        { text: 'kubectl patch service cache-svc --selector=app=cache', exact: true },
+      ],
+      goals: [
         {
-          kind: 'ReplicaSet' as const,
+          description: 'Diagnose failures with "kubectl describe" or "kubectl logs"',
+          check: (s: ClusterState) => {
+            const cmds = s._commandsUsed ?? [];
+            return cmds.some(c => c.startsWith('describe-') || c === 'logs');
+          },
+        },
+        {
+          description: 'Create the missing ConfigMap',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-configmap'),
+        },
+        {
+          description: 'Fix the worker image with "kubectl set image"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
+        },
+        {
+          description: 'Patch the cache-svc selector',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('patch'),
+        },
+        {
+          description: 'Scale the frontend deployment',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('scale'),
+        },
+        {
+          description: 'Create the missing "api-config" ConfigMap so API pods can start',
+          check: (s: ClusterState) => {
+            return s.configMaps.some(cm => cm.metadata.name === 'api-config');
+          },
+        },
+        {
+          description: 'Fix the worker image typo ("workerr:1.0" → "worker:1.0")',
+          check: (s: ClusterState) => {
+            const worker = s.deployments.find(d => d.metadata.name === 'worker');
+            return !!worker && worker.spec.template.spec.image === 'worker:1.0';
+          },
+        },
+        {
+          description: 'Fix cache-svc selector to match cache pods (app=cache)',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'cache-svc');
+            return !!svc && svc.spec.selector['app'] === 'cache' && svc.status.endpoints.length > 0;
+          },
+        },
+        {
+          description: 'Scale frontend to 3 replicas',
+          check: (s: ClusterState) => {
+            const frontend = s.deployments.find(d => d.metadata.name === 'frontend');
+            const frontendPods = s.pods.filter(
+              p => p.metadata.labels['app'] === 'frontend' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp
+            );
+            return !!frontend && frontend.spec.replicas >= 3 && frontendPods.length >= 3;
+          },
+        },
+        {
+          description: 'All services have endpoints',
+          check: (s: ClusterState) => {
+            return s.services.every(svc => svc.status.endpoints.length > 0);
+          },
+        },
+      ],
+      podFailureRules: {
+        'workerr:1.0': 'CrashLoopBackOff',
+      },
+      initialState: () => {
+        // --- Frontend Deployment (1 replica running, needs scaling to 3) ---
+        const frontendImage = 'nginx:1.21';
+        const frontendHash = templateHash({ image: frontendImage });
+        const frontendDepUid = generateUID();
+        const frontendRsUid = generateUID();
+
+        const frontendPods = Array.from({ length: 1 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `frontend-${frontendHash.slice(0, 10)}`,
-            uid: frontendRsUid,
+            name: generatePodName(`frontend-${frontendHash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'frontend', 'pod-template-hash': frontendHash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'frontend',
-              uid: frontendDepUid,
+              kind: 'ReplicaSet',
+              name: `frontend-${frontendHash.slice(0, 10)}`,
+              uid: frontendRsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 1,
-            selector: { app: 'frontend', 'pod-template-hash': frontendHash },
-            template: {
-              labels: { app: 'frontend', 'pod-template-hash': frontendHash },
-              spec: { image: frontendImage },
-            },
-          },
-          status: { replicas: 1, readyReplicas: 1 },
-        },
-        {
-          kind: 'ReplicaSet' as const,
+          spec: { image: frontendImage, nodeName: 'node-1' },
+          status: { phase: 'Running' as const, tickCreated: 0 },
+        }));
+
+        // --- API Deployment (2 replicas, stuck on missing ConfigMap) ---
+        const apiImage = 'api:2.0';
+        const apiHash = templateHash({ image: apiImage });
+        const apiDepUid = generateUID();
+        const apiRsUid = generateUID();
+
+        const apiPods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `api-${apiHash.slice(0, 10)}`,
-            uid: apiRsUid,
+            name: generatePodName(`api-${apiHash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'api', 'pod-template-hash': apiHash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'api',
-              uid: apiDepUid,
+              kind: 'ReplicaSet',
+              name: `api-${apiHash.slice(0, 10)}`,
+              uid: apiRsUid,
             },
-            creationTimestamp: Date.now() - 60000,
+            creationTimestamp: Date.now() - 30000,
           },
           spec: {
-            replicas: 2,
-            selector: { app: 'api', 'pod-template-hash': apiHash },
-            template: {
-              labels: { app: 'api', 'pod-template-hash': apiHash },
-              spec: { image: apiImage },
-            },
+            image: apiImage,
+            nodeName: 'node-1',
+            envFrom: [{ configMapRef: 'api-config' }],
           },
-          status: { replicas: 2, readyReplicas: 0 },
-        },
-        {
-          kind: 'ReplicaSet' as const,
+          status: {
+            phase: 'Pending' as const,
+            reason: 'CreateContainerConfigError',
+            message: 'configmap "api-config" not found',
+          },
+        }));
+
+        // --- Worker Deployment (2 replicas, bad image causing CrashLoopBackOff) ---
+        const workerBadImage = 'workerr:1.0'; // typo!
+        const workerHash = templateHash({ image: workerBadImage });
+        const workerDepUid = generateUID();
+        const workerRsUid = generateUID();
+
+        const workerPods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `worker-${workerHash.slice(0, 10)}`,
-            uid: workerRsUid,
+            name: generatePodName(`worker-${workerHash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'worker', 'pod-template-hash': workerHash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'worker',
-              uid: workerDepUid,
+              kind: 'ReplicaSet',
+              name: `worker-${workerHash.slice(0, 10)}`,
+              uid: workerRsUid,
             },
-            creationTimestamp: Date.now() - 60000,
+            creationTimestamp: Date.now() - 30000,
           },
           spec: {
-            replicas: 2,
-            selector: { app: 'worker', 'pod-template-hash': workerHash },
-            template: {
-              labels: { app: 'worker', 'pod-template-hash': workerHash },
-              spec: { image: workerBadImage },
-            },
-          },
-          status: { replicas: 2, readyReplicas: 0 },
-        },
-      ],
-      deployments: [
-        {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'frontend',
-            uid: frontendDepUid,
-            labels: { app: 'frontend' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 1,
-            selector: { app: 'frontend' },
-            template: {
-              labels: { app: 'frontend' },
-              spec: { image: frontendImage },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            image: workerBadImage,
+            nodeName: 'node-2',
+            failureMode: 'CrashLoopBackOff' as const,
           },
           status: {
-            replicas: 1,
-            updatedReplicas: 1,
-            readyReplicas: 1,
-            availableReplicas: 1,
-            conditions: [{ type: 'Available', status: 'True' }],
+            phase: 'CrashLoopBackOff' as const,
+            reason: 'CrashLoopBackOff',
+            message: 'Back-off restarting failed container',
+            restartCount: 3,
           },
-        },
-        {
-          kind: 'Deployment' as const,
+        }));
+
+        // --- Cache pod (running, but service has wrong selector) ---
+        const cacheImage = 'redis:7.0';
+        const cachePod = {
+          kind: 'Pod' as const,
           metadata: {
-            name: 'api',
-            uid: apiDepUid,
-            labels: { app: 'api' },
+            name: 'cache-0',
+            uid: generateUID(),
+            labels: { app: 'cache' },
             creationTimestamp: Date.now() - 120000,
           },
-          spec: {
-            replicas: 2,
-            selector: { app: 'api' },
-            template: {
-              labels: { app: 'api' },
-              spec: { image: apiImage },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+          spec: { image: cacheImage, nodeName: 'node-2' },
+          status: { phase: 'Running' as const, tickCreated: 0 },
+        };
+
+        // --- Nodes (all healthy, no cordoned nodes) ---
+        const nodeNames = ['node-1', 'node-2', 'node-3'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
           },
+          spec: { capacity: { pods: 6 } },
           status: {
-            replicas: 2,
-            updatedReplicas: 2,
-            readyReplicas: 0,
-            availableReplicas: 0,
-            conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
+            conditions: [{
+              type: 'Ready' as const,
+              status: 'True' as 'True' | 'False',
+            }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: name === 'node-1' ? 3 : name === 'node-2' ? 3 : 0,
           },
-        },
-        {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'worker',
-            uid: workerDepUid,
-            labels: { app: 'worker' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 2,
-            selector: { app: 'worker' },
-            template: {
-              labels: { app: 'worker' },
-              spec: { image: workerBadImage },
+        }));
+
+        return {
+          pods: [...frontendPods, ...apiPods, ...workerPods, cachePod],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `frontend-${frontendHash.slice(0, 10)}`,
+                uid: frontendRsUid,
+                labels: { app: 'frontend', 'pod-template-hash': frontendHash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'frontend',
+                  uid: frontendDepUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 1,
+                selector: { app: 'frontend', 'pod-template-hash': frontendHash },
+                template: {
+                  labels: { app: 'frontend', 'pod-template-hash': frontendHash },
+                  spec: { image: frontendImage },
+                },
+              },
+              status: { replicas: 1, readyReplicas: 1 },
             },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 2,
-            updatedReplicas: 2,
-            readyReplicas: 0,
-            availableReplicas: 0,
-            conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
-          },
-        },
-      ],
-      nodes,
-      services: [
-        {
-          kind: 'Service' as const,
-          metadata: {
-            name: 'frontend-svc',
-            uid: generateUID(),
-            labels: {},
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: { selector: { app: 'frontend' }, port: 80 },
-          status: { endpoints: frontendPods.map((p) => p.metadata.name) },
-        },
-        {
-          kind: 'Service' as const,
-          metadata: {
-            name: 'api-svc',
-            uid: generateUID(),
-            labels: {},
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: { selector: { app: 'api' }, port: 8080 },
-          status: { endpoints: [] },
-        },
-        {
-          kind: 'Service' as const,
-          metadata: {
-            name: 'cache-svc',
-            uid: generateUID(),
-            labels: {},
-            creationTimestamp: Date.now() - 120000,
-          },
-          // Wrong selector! Pods have app=cache but service selects app=redis-cache
-          spec: { selector: { app: 'redis-cache' }, port: 6379 },
-          status: { endpoints: [] },
-        },
-      ],
-      events: [
-        {
-          timestamp: Date.now() - 30000,
-          tick: 0,
-          type: 'Warning' as const,
-          reason: 'Failed',
-          objectKind: 'Pod',
-          objectName: apiPods[0]?.metadata.name || 'api-pod',
-          message: 'CreateContainerConfigError: configmap "api-config" not found',
-        },
-        {
-          timestamp: Date.now() - 25000,
-          tick: 0,
-          type: 'Warning' as const,
-          reason: 'BackOff',
-          objectKind: 'Pod',
-          objectName: workerPods[0]?.metadata.name || 'worker-pod',
-          message: 'Back-off restarting failed container (restart count: 3)',
-        },
-      ],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    // ConfigMap must exist
-    if (!state.configMaps.some(cm => cm.metadata.name === 'api-config')) return false;
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `api-${apiHash.slice(0, 10)}`,
+                uid: apiRsUid,
+                labels: { app: 'api', 'pod-template-hash': apiHash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'api',
+                  uid: apiDepUid,
+                },
+                creationTimestamp: Date.now() - 60000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'api', 'pod-template-hash': apiHash },
+                template: {
+                  labels: { app: 'api', 'pod-template-hash': apiHash },
+                  spec: { image: apiImage },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 0 },
+            },
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `worker-${workerHash.slice(0, 10)}`,
+                uid: workerRsUid,
+                labels: { app: 'worker', 'pod-template-hash': workerHash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'worker',
+                  uid: workerDepUid,
+                },
+                creationTimestamp: Date.now() - 60000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'worker', 'pod-template-hash': workerHash },
+                template: {
+                  labels: { app: 'worker', 'pod-template-hash': workerHash },
+                  spec: { image: workerBadImage },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 0 },
+            },
+          ],
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'frontend',
+                uid: frontendDepUid,
+                labels: { app: 'frontend' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 1,
+                selector: { app: 'frontend' },
+                template: {
+                  labels: { app: 'frontend' },
+                  spec: { image: frontendImage },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 1,
+                updatedReplicas: 1,
+                readyReplicas: 1,
+                availableReplicas: 1,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
+            },
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'api',
+                uid: apiDepUid,
+                labels: { app: 'api' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'api' },
+                template: {
+                  labels: { app: 'api' },
+                  spec: { image: apiImage },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 0,
+                availableReplicas: 0,
+                conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
+              },
+            },
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'worker',
+                uid: workerDepUid,
+                labels: { app: 'worker' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'worker' },
+                template: {
+                  labels: { app: 'worker' },
+                  spec: { image: workerBadImage },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 0,
+                availableReplicas: 0,
+                conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
+              },
+            },
+          ],
+          nodes,
+          services: [
+            {
+              kind: 'Service' as const,
+              metadata: {
+                name: 'frontend-svc',
+                uid: generateUID(),
+                labels: {},
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: { selector: { app: 'frontend' }, port: 80 },
+              status: { endpoints: frontendPods.map((p) => p.metadata.name) },
+            },
+            {
+              kind: 'Service' as const,
+              metadata: {
+                name: 'api-svc',
+                uid: generateUID(),
+                labels: {},
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: { selector: { app: 'api' }, port: 8080 },
+              status: { endpoints: [] },
+            },
+            {
+              kind: 'Service' as const,
+              metadata: {
+                name: 'cache-svc',
+                uid: generateUID(),
+                labels: {},
+                creationTimestamp: Date.now() - 120000,
+              },
+              // Wrong selector! Pods have app=cache but service selects app=redis-cache
+              spec: { selector: { app: 'redis-cache' }, port: 6379 },
+              status: { endpoints: [] },
+            },
+          ],
+          events: [
+            {
+              timestamp: Date.now() - 30000,
+              tick: 0,
+              type: 'Warning' as const,
+              reason: 'Failed',
+              objectKind: 'Pod',
+              objectName: apiPods[0]?.metadata.name || 'api-pod',
+              message: 'CreateContainerConfigError: configmap "api-config" not found',
+            },
+            {
+              timestamp: Date.now() - 25000,
+              tick: 0,
+              type: 'Warning' as const,
+              reason: 'BackOff',
+              objectKind: 'Pod',
+              objectName: workerPods[0]?.metadata.name || 'worker-pod',
+              message: 'Back-off restarting failed container (restart count: 3)',
+            },
+          ],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state) => {
+        // ConfigMap must exist
+        if (!state.configMaps.some(cm => cm.metadata.name === 'api-config')) return false;
 
-    // All deployments healthy: readyReplicas >= spec.replicas
-    const deploymentsHealthy = state.deployments.every(
-      (d) => (d.status.readyReplicas || 0) >= d.spec.replicas
-    );
-    if (!deploymentsHealthy) return false;
+        // All deployments healthy: readyReplicas >= spec.replicas
+        const deploymentsHealthy = state.deployments.every(
+          (d) => (d.status.readyReplicas || 0) >= d.spec.replicas
+        );
+        if (!deploymentsHealthy) return false;
 
-    // Frontend must have 3+ replicas
-    const frontend = state.deployments.find(d => d.metadata.name === 'frontend');
-    if (!frontend || frontend.spec.replicas < 3) return false;
+        // Frontend must have 3+ replicas
+        const frontend = state.deployments.find(d => d.metadata.name === 'frontend');
+        if (!frontend || frontend.spec.replicas < 3) return false;
 
-    // All services have endpoints
-    const servicesHealthy = state.services.every(
-      (s) => s.status.endpoints.length > 0
-    );
-    if (!servicesHealthy) return false;
+        // All services have endpoints
+        const servicesHealthy = state.services.every(
+          (s) => s.status.endpoints.length > 0
+        );
+        if (!servicesHealthy) return false;
 
-    return true;
-  },
+        return true;
+      },
+    },
+  ],
 };

@@ -15,13 +15,13 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
     return { actions, events };
   }
 
-  // Find Pending pods without a nodeName
+  // Find Pending pods without a nodeName (retry Unschedulable pods each tick)
   const unscheduledPods = cluster.pods.filter(
     (p) =>
       p.status.phase === 'Pending' &&
       !p.spec.nodeName &&
       !p.metadata.deletionTimestamp &&
-      !p.status.reason // Don't schedule pods that are already failing
+      (!p.status.reason || p.status.reason === 'Unschedulable')
   );
 
   for (const pod of unscheduledPods) {
@@ -73,6 +73,8 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
 
     if (availableNode) {
       pod.spec.nodeName = availableNode.metadata.name;
+      pod.status.reason = undefined;
+      pod.status.message = undefined;
       actions.push({
         controller: 'Scheduler',
         action: 'bind',

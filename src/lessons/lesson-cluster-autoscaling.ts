@@ -13,23 +13,6 @@ export const lessonClusterAutoscaling: Lesson = {
   successMessage:
     'Karpenter provisioned new nodes to handle the Unschedulable pods. Cluster autoscaling completes the scaling story: ' +
     'HPA scales pods, Karpenter scales nodes. Together they handle demand at every level.',
-  hints: [
-    { text: 'Check kubectl get pods — some pods are Pending because no node has capacity.' },
-    { text: 'Karpenter watches for Unschedulable pods and provisions new nodes automatically.' },
-    { text: 'Just keep reconciling — Karpenter will add a node and the scheduler will assign pods to it.' },
-  ],
-  goals: [
-    {
-      description: 'Karpenter provisions a new node for Unschedulable pods',
-      check: (s: ClusterState) => s.nodes.length > 1,
-    },
-    {
-      description: 'All 5 "web" pods are Running',
-      check: (s: ClusterState) => {
-        return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 5;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -189,197 +172,228 @@ export const lessonClusterAutoscaling: Lesson = {
         'is never sacrificed for cost optimization.',
     },
   ],
-  initialState: () => {
-    const depUid = generateUID();
-    const rsUid = generateUID();
-    const image = 'web-app:1.0';
-    const hash = templateHash({ image });
-
-    // 1 node with capacity 3
-    const nodes = [
-      {
-        kind: 'Node' as const,
-        metadata: {
-          name: 'node-1',
-          uid: generateUID(),
-          labels: { 'kubernetes.io/hostname': 'node-1' },
-          creationTimestamp: Date.now() - 300000,
-        },
-        spec: { capacity: { pods: 3 } },
-        status: {
-          conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-          allocatedPods: 3,
-        },
-      },
-    ];
-
-    // 5 pods desired: 3 Running on node-1, 2 Pending/Unschedulable
-    const runningPods = Array.from({ length: 3 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 60000,
-      },
-      spec: { image, nodeName: 'node-1' },
-      status: { phase: 'Running' as const },
-    }));
-
-    const pendingPods = Array.from({ length: 2 }, () => ({
-      kind: 'Pod' as const,
-      metadata: {
-        name: generatePodName(`web-${hash.slice(0, 10)}`),
-        uid: generateUID(),
-        labels: { app: 'web', 'pod-template-hash': hash },
-        ownerReference: {
-          kind: 'ReplicaSet',
-          name: `web-${hash.slice(0, 10)}`,
-          uid: rsUid,
-        },
-        creationTimestamp: Date.now() - 30000,
-      },
-      spec: { image },
-      status: { phase: 'Pending' as const, reason: 'Unschedulable', message: 'No nodes with available capacity' },
-    }));
-
-    return {
-      pods: [...runningPods, ...pendingPods],
-      replicaSets: [
+  practices: [
+    {
+      title: 'Observe Node Autoscaling',
+      goalDescription:
+        'Some "web" pods are Pending/Unschedulable because the cluster lacks node capacity. Reconcile to let Karpenter automatically provision new nodes, then verify all 5 "web" pods are Running.',
+      successMessage:
+        'Karpenter provisioned new nodes to handle the Unschedulable pods. Cluster autoscaling completes the scaling story: ' +
+        'HPA scales pods, Karpenter scales nodes. Together they handle demand at every level.',
+      hints: [
+        { text: 'Check kubectl get pods — some pods are Pending because no node has capacity.' },
+        { text: 'Karpenter watches for Unschedulable pods and provisions new nodes automatically.' },
+        { text: 'Just keep reconciling — Karpenter will add a node and the scheduler will assign pods to it.' },
+      ],
+      goals: [
         {
-          kind: 'ReplicaSet' as const,
+          description: 'Use "kubectl get pods" to check pod status',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
+        },
+        {
+          description: 'Karpenter provisions a new node for Unschedulable pods',
+          check: (s: ClusterState) => s.nodes.length > 1,
+        },
+        {
+          description: 'All 5 "web" pods are Running',
+          check: (s: ClusterState) => {
+            return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 5;
+          },
+        },
+      ],
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'web-app:1.0';
+        const hash = templateHash({ image });
+
+        // 1 node with capacity 3
+        const nodes = [
+          {
+            kind: 'Node' as const,
+            metadata: {
+              name: 'node-1',
+              uid: generateUID(),
+              labels: { 'kubernetes.io/hostname': 'node-1' },
+              creationTimestamp: Date.now() - 300000,
+            },
+            spec: { capacity: { pods: 3 } },
+            status: {
+              conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+              allocatedPods: 3,
+            },
+          },
+        ];
+
+        // 5 pods desired: 3 Running on node-1, 2 Pending/Unschedulable
+        const runningPods = Array.from({ length: 3 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: `web-${hash.slice(0, 10)}`,
-            uid: rsUid,
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            uid: generateUID(),
             labels: { app: 'web', 'pod-template-hash': hash },
             ownerReference: {
-              kind: 'Deployment',
-              name: 'web',
-              uid: depUid,
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
-            creationTimestamp: Date.now() - 120000,
+            creationTimestamp: Date.now() - 60000,
           },
-          spec: {
-            replicas: 5,
-            selector: { app: 'web', 'pod-template-hash': hash },
-            template: {
-              labels: { app: 'web', 'pod-template-hash': hash },
-              spec: { image },
-            },
-          },
-          status: { replicas: 5, readyReplicas: 3 },
-        },
-      ],
-      deployments: [
-        {
-          kind: 'Deployment' as const,
-          metadata: {
-            name: 'web',
-            uid: depUid,
-            labels: { app: 'web' },
-            creationTimestamp: Date.now() - 120000,
-          },
-          spec: {
-            replicas: 5,
-            selector: { app: 'web' },
-            template: {
-              labels: { app: 'web' },
-              spec: { image },
-            },
-            strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-          },
-          status: {
-            replicas: 5,
-            updatedReplicas: 5,
-            readyReplicas: 3,
-            availableReplicas: 3,
-            conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
-          },
-        },
-      ],
-      nodes,
-      services: [],
-      events: [
-        {
-          timestamp: Date.now() - 30000,
-          tick: 0,
-          type: 'Warning' as const,
-          reason: 'FailedScheduling',
-          objectKind: 'Pod',
-          objectName: pendingPods[0]?.metadata.name || 'web-pod',
-          message: 'No nodes with available capacity. 0/1 nodes are available: 1 node has reached pod limit.',
-        },
-      ],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  afterTick: (tick, state) => {
-    // Simulate Karpenter: if any pods are Unschedulable, add a new node
-    const unschedulablePods = state.pods.filter(
-      (p) =>
-        p.status.phase === 'Pending' &&
-        p.status.reason === 'Unschedulable' &&
-        !p.metadata.deletionTimestamp
-    );
+          spec: { image, nodeName: 'node-1' },
+          status: { phase: 'Running' as const },
+        }));
 
-    if (unschedulablePods.length > 0) {
-      const existingNodeCount = state.nodes.length;
-      const newNodeName = `karpenter-node-${existingNodeCount + 1}`;
-
-      // Check if we already added this node
-      const alreadyExists = state.nodes.some((n) => n.metadata.name === newNodeName);
-      if (!alreadyExists) {
-        state.nodes.push({
-          kind: 'Node' as const,
+        const pendingPods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
           metadata: {
-            name: newNodeName,
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
             uid: generateUID(),
-            labels: { 'kubernetes.io/hostname': newNodeName, 'karpenter.sh/provisioned': 'true' },
-            creationTimestamp: Date.now(),
+            labels: { app: 'web', 'pod-template-hash': hash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
+            },
+            creationTimestamp: Date.now() - 30000,
           },
-          spec: { capacity: { pods: 4 } },
-          status: {
-            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 0,
-          },
-        });
+          spec: { image },
+          status: { phase: 'Pending' as const, reason: 'Unschedulable', message: 'No nodes with available capacity' },
+        }));
 
-        state.events.push({
-          timestamp: Date.now(),
-          tick,
-          type: 'Normal' as const,
-          reason: 'NodeProvisioned',
-          objectKind: 'Node',
-          objectName: newNodeName,
-          message: `Karpenter provisioned node ${newNodeName} for ${unschedulablePods.length} unschedulable pod(s)`,
-        });
-      }
-    }
+        return {
+          pods: [...runningPods, ...pendingPods],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 5,
+                selector: { app: 'web', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 5, readyReplicas: 3 },
+            },
+          ],
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web',
+                uid: depUid,
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 5,
+                selector: { app: 'web' },
+                template: {
+                  labels: { app: 'web' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 5,
+                updatedReplicas: 5,
+                readyReplicas: 3,
+                availableReplicas: 3,
+                conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
+              },
+            },
+          ],
+          nodes,
+          services: [],
+          events: [
+            {
+              timestamp: Date.now() - 30000,
+              tick: 0,
+              type: 'Warning' as const,
+              reason: 'FailedScheduling',
+              objectKind: 'Pod',
+              objectName: pendingPods[0]?.metadata.name || 'web-pod',
+              message: 'No nodes with available capacity. 0/1 nodes are available: 1 node has reached pod limit.',
+            },
+          ],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      afterTick: (tick, state) => {
+        // Simulate Karpenter: if any pods are Unschedulable, add a new node
+        const unschedulablePods = state.pods.filter(
+          (p) =>
+            p.status.phase === 'Pending' &&
+            p.status.reason === 'Unschedulable' &&
+            !p.metadata.deletionTimestamp
+        );
 
-    return state;
-  },
-  goalCheck: (state) => {
-    const runningWebPods = state.pods.filter(
-      (p) =>
-        p.metadata.labels['app'] === 'web' &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
+        if (unschedulablePods.length > 0) {
+          const existingNodeCount = state.nodes.length;
+          const newNodeName = `karpenter-node-${existingNodeCount + 1}`;
 
-    return runningWebPods.length >= 5;
-  },
+          // Check if we already added this node
+          const alreadyExists = state.nodes.some((n) => n.metadata.name === newNodeName);
+          if (!alreadyExists) {
+            state.nodes.push({
+              kind: 'Node' as const,
+              metadata: {
+                name: newNodeName,
+                uid: generateUID(),
+                labels: { 'kubernetes.io/hostname': newNodeName, 'karpenter.sh/provisioned': 'true' },
+                creationTimestamp: Date.now(),
+              },
+              spec: { capacity: { pods: 4 } },
+              status: {
+                conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+                allocatedPods: 0,
+              },
+            });
+
+            state.events.push({
+              timestamp: Date.now(),
+              tick,
+              type: 'Normal' as const,
+              reason: 'NodeProvisioned',
+              objectKind: 'Node',
+              objectName: newNodeName,
+              message: `Karpenter provisioned node ${newNodeName} for ${unschedulablePods.length} unschedulable pod(s)`,
+            });
+          }
+        }
+
+        return state;
+      },
+      goalCheck: (state) => {
+        const runningWebPods = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'web' &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
+
+        return runningWebPods.length >= 5;
+      },
+    },
+  ],
 };

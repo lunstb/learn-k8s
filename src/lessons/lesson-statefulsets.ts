@@ -13,42 +13,6 @@ export const lessonStatefulSets: Lesson = {
   successMessage:
     'All 3 StatefulSet pods are running with stable ordinal names. Unlike Deployments, StatefulSets give each pod ' +
     'a predictable identity that survives restarts — essential for databases and clustered applications.',
-  yamlTemplate: `apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: mysql
-spec:
-  serviceName: mysql
-  replicas: ???
-  selector:
-    matchLabels:
-      app: mysql
-  template:
-    metadata:
-      labels:
-        app: mysql
-    spec:
-      containers:
-      - name: mysql
-        image: ???`,
-  hints: [
-    { text: 'Switch to the YAML Editor tab — fill in replicas as 3 and image as "mysql:8.0". Then click Apply.' },
-    { text: 'Or use the terminal: kubectl create statefulset mysql --image=mysql:8.0 --replicas=3', exact: false },
-    { text: 'Reconcile multiple times — StatefulSet creates pods sequentially, not all at once.' },
-  ],
-  goals: [
-    {
-      description: 'Create a StatefulSet named "mysql" with 3 replicas',
-      check: (s: ClusterState) => !!s.statefulSets.find(sts => sts.metadata.name === 'mysql'),
-    },
-    {
-      description: 'All 3 pods Running (mysql-0, mysql-1, mysql-2)',
-      check: (s: ClusterState) => {
-        const running = s.pods.filter(p => p.metadata.name.startsWith('mysql-') && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
-        return running.length >= 3;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -204,55 +168,220 @@ spec:
         'Deployments treat pods as interchangeable, enabling faster scaling, simpler rollbacks, and more efficient scheduling. Use the simplest controller that meets your requirements.',
     },
   ],
-  initialState: () => {
-    const nodeNames = ['node-1', 'node-2', 'node-3'];
-    const nodes = nodeNames.map((name) => ({
-      kind: 'Node' as const,
-      metadata: {
-        name,
-        uid: generateUID(),
-        labels: { 'kubernetes.io/hostname': name },
-        creationTimestamp: Date.now() - 300000,
+  practices: [
+    {
+      title: 'Deploy a StatefulSet',
+      goalDescription:
+        'Create a StatefulSet named "mysql" with image mysql:8.0 and 3 replicas. Reconcile until all 3 pods (mysql-0, mysql-1, mysql-2) are Running.',
+      successMessage:
+        'All 3 StatefulSet pods are running with stable ordinal names. Unlike Deployments, StatefulSets give each pod ' +
+        'a predictable identity that survives restarts — essential for databases and clustered applications.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  serviceName: mysql
+  replicas: ???
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: ???`,
+      hints: [
+        { text: 'Switch to the YAML Editor tab — fill in replicas as 3 and image as "mysql:8.0". Then click Apply.' },
+        { text: 'Or use the terminal: kubectl create statefulset mysql --image=mysql:8.0 --replicas=3', exact: false },
+        { text: 'Reconcile multiple times — StatefulSet creates pods sequentially, not all at once.' },
+      ],
+      goals: [
+        {
+          description: 'Use "kubectl create statefulset" or "kubectl apply" to create the StatefulSet',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-statefulset') || (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'Use "kubectl get pods" to check pod status',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
+        },
+        {
+          description: 'Create a StatefulSet named "mysql" with 3 replicas',
+          check: (s: ClusterState) => !!s.statefulSets.find(sts => sts.metadata.name === 'mysql'),
+        },
+        {
+          description: 'All 3 pods Running (mysql-0, mysql-1, mysql-2)',
+          check: (s: ClusterState) => {
+            const running = s.pods.filter(p => p.metadata.name.startsWith('mysql-') && p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
+            return running.length >= 3;
+          },
+        },
+      ],
+      initialState: () => {
+        const nodeNames = ['node-1', 'node-2', 'node-3'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: { capacity: { pods: 4 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 0,
+          },
+        }));
+
+        return {
+          pods: [],
+          replicaSets: [],
+          deployments: [],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
       },
-      spec: { capacity: { pods: 4 } },
-      status: {
-        conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-        allocatedPods: 0,
+      goalCheck: (state: ClusterState) => {
+        if (state.statefulSets.length < 1) return false;
+
+        const ss = state.statefulSets.find((s) => s.metadata.name === 'mysql');
+        if (!ss) return false;
+
+        const runningMysqlPods = state.pods.filter(
+          (p) =>
+            p.metadata.name.startsWith('mysql-') &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
+
+        return runningMysqlPods.length >= 3;
       },
-    }));
+    },
+    {
+      title: 'Create a Headless Service for a StatefulSet',
+      goalDescription:
+        'The "redis" StatefulSet is running but has no headless Service. Create a Service named "redis-headless" with selector app=redis to enable per-pod DNS resolution.',
+      successMessage:
+        'With a headless Service, each StatefulSet pod gets a stable DNS name: redis-0.redis-headless, redis-1.redis-headless, etc. This is essential for stateful applications like databases that need to address specific replicas.',
+      hints: [
+        { text: 'StatefulSets require a headless Service for per-pod DNS names.' },
+        { text: 'kubectl create service redis-headless --selector=app=redis --port=6379', exact: true },
+        { text: 'A headless Service in real K8s has clusterIP: None. In this simulator, just creating a Service with the right selector is sufficient.' },
+      ],
+      goals: [
+        {
+          description: 'Create a Service named "redis-headless"',
+          check: (s: ClusterState) => s.services.some(svc => svc.metadata.name === 'redis-headless'),
+        },
+        {
+          description: 'Service selector matches StatefulSet pods (app=redis)',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'redis-headless');
+            return !!svc && svc.spec.selector['app'] === 'redis';
+          },
+        },
+        {
+          description: 'Service has endpoints from all 3 Redis pods',
+          check: (s: ClusterState) => {
+            const svc = s.services.find(svc => svc.metadata.name === 'redis-headless');
+            return !!svc && svc.status.endpoints.length >= 3;
+          },
+        },
+      ],
+      initialState: () => {
+        const stsUid = generateUID();
+        const nodeNames = ['node-1', 'node-2'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: { capacity: { pods: 4 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 2,
+          },
+        }));
 
-    return {
-      pods: [],
-      replicaSets: [],
-      deployments: [],
-      nodes,
-      services: [],
-      events: [],
-      namespaces: [],
-      configMaps: [],
-      secrets: [],
-      ingresses: [],
-      statefulSets: [],
-      daemonSets: [],
-      jobs: [],
-      cronJobs: [],
-      hpas: [],
-      helmReleases: [],
-    };
-  },
-  goalCheck: (state) => {
-    if (state.statefulSets.length < 1) return false;
+        const pods = [0, 1, 2].map((i) => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: `redis-${i}`,
+            uid: generateUID(),
+            labels: { app: 'redis' },
+            ownerReference: {
+              kind: 'StatefulSet',
+              name: 'redis',
+              uid: stsUid,
+            },
+            creationTimestamp: Date.now() - 60000 + i * 1000,
+          },
+          spec: { image: 'redis:7.0', nodeName: nodes[i % 2].metadata.name },
+          status: { phase: 'Running' as const },
+        }));
 
-    const ss = state.statefulSets.find((s) => s.metadata.name === 'mysql');
-    if (!ss) return false;
-
-    const runningMysqlPods = state.pods.filter(
-      (p) =>
-        p.metadata.name.startsWith('mysql-') &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
-
-    return runningMysqlPods.length >= 3;
-  },
+        return {
+          pods,
+          replicaSets: [],
+          deployments: [],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [
+            {
+              kind: 'StatefulSet' as const,
+              metadata: {
+                name: 'redis',
+                uid: stsUid,
+                labels: { app: 'redis' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 3,
+                selector: { app: 'redis' },
+                serviceName: 'redis-headless',
+                template: {
+                  labels: { app: 'redis' },
+                  spec: { image: 'redis:7.0' },
+                },
+              },
+              status: { replicas: 3, readyReplicas: 3, currentReplicas: 3 },
+            },
+          ],
+          daemonSets: [],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        const svc = state.services.find((s) => s.metadata.name === 'redis-headless');
+        if (!svc) return false;
+        return svc.spec.selector['app'] === 'redis' && svc.status.endpoints.length >= 3;
+      },
+    },
+  ],
 };

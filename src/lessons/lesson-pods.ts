@@ -1,5 +1,6 @@
 import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
+import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lessonPods: Lesson = {
   id: 2,
@@ -11,33 +12,6 @@ export const lessonPods: Lesson = {
     'Create a standalone pod named "standalone" with image nginx:1.0 and delete it. Then create a Deployment named "my-app" with image nginx:1.0 and 2 replicas, and observe self-healing when you delete a managed pod.',
   successMessage:
     'Standalone pods vanish when deleted, but managed pods are replaced. Always use Deployments in production.',
-  hints: [
-    { text: 'Start by creating a standalone pod — what command creates a single pod?' },
-    { text: 'kubectl create pod standalone --image=nginx:1.0', exact: true },
-    { text: 'After deleting the standalone pod, create a Deployment for self-healing.' },
-    { text: 'kubectl create deployment my-app --image=nginx:1.0 --replicas=2', exact: true },
-    { text: 'Delete one managed pod and reconcile to see the replacement appear.' },
-  ],
-  goals: [
-    {
-      description: 'Create a standalone pod named "standalone"',
-      check: (s: ClusterState) => s.pods.some(p => p.metadata.name === 'standalone' && !p.metadata.deletionTimestamp) || s.events.some(e => e.objectKind === 'Pod' && e.objectName === 'standalone'),
-    },
-    {
-      description: 'Create a Deployment named "my-app" with 2 replicas',
-      check: (s: ClusterState) => !!s.deployments.find(d => d.metadata.name === 'my-app'),
-    },
-    {
-      description: 'Get 2 Running pods managed by the "my-app" Deployment',
-      check: (s: ClusterState) => {
-        const dep = s.deployments.find(d => d.metadata.name === 'my-app');
-        if (!dep) return false;
-        const rs = s.replicaSets.find(r => r.metadata.ownerReference?.uid === dep.metadata.uid && !r.metadata.deletionTimestamp);
-        if (!rs) return false;
-        return s.pods.filter(p => p.metadata.ownerReference?.uid === rs.metadata.uid && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length === 2;
-      },
-    },
-  ],
   lecture: {
     sections: [
       {
@@ -164,63 +138,196 @@ export const lessonPods: Lesson = {
     },
     {
       question:
-        'A pod has ownerReference pointing to ReplicaSet "web-rs". Someone deletes "web-rs" directly (not through its parent Deployment). What happens to the pod?',
+        'A pod managed by a Deployment enters CrashLoopBackOff. You delete the pod with kubectl delete pod. What happens?',
       choices: [
-        'The pod is immediately terminated via garbage collection because its owner no longer exists',
-        'The pod keeps running but becomes standalone — with no controller watching, it will not be replaced if it fails',
-        'The Deployment detects the missing RS and immediately reassigns the pod to a newly created replacement RS',
-        'The pod\'s ownerReference is automatically cleared, converting it into an independent standalone pod',
+        'The pod is permanently removed — deleting a pod always removes it regardless of ownership',
+        'The ReplicaSet creates a replacement pod immediately, but it will also crash if the underlying issue is not fixed',
+        'The Deployment detects the deletion and scales down its desired replica count by one',
+        'Kubernetes prevents deletion of managed pods — you must delete the owning Deployment instead',
       ],
-      correctIndex: 0,
+      correctIndex: 1,
       explanation:
-        'By default, deleting a ReplicaSet triggers cascade deletion — the garbage collector finds all pods with an ownerReference pointing to the deleted RS and removes them. ' +
-        'This is the same ownership chain that works when deleting a Deployment. If you wanted to keep the pods running, you would need to use --cascade=orphan, ' +
-        'which deletes only the RS and leaves the pods as unmanaged standalone resources. ' +
-        'The key insight: ownerReferences are what connect pods to controllers, and garbage collection follows those references on deletion.',
-    },
-  ],
-  initialState: () => {
-    return {
-      deployments: [],
-      replicaSets: [],
-      pods: [],
-      nodes: [],
-      services: [],
-      events: [],
-    };
-  },
-  steps: [
-    {
-      id: 'create-standalone',
-      trigger: 'onLoad',
-      instruction:
-        'Step 1: Create a standalone pod with "kubectl create pod standalone --image=nginx:1.0" and Reconcile until it\'s Running.',
+        'Deleting a managed pod triggers replacement by its owning ReplicaSet. The RS sees fewer pods than desired and creates a new one. However, if the root cause (bad image, missing config, etc.) is not fixed, the replacement pod will also crash. This is why deleting pods is rarely a fix — you need to address the underlying issue in the Deployment spec. The only case where deleting a pod helps is if the failure was truly transient (like a network blip during image pull).',
     },
     {
-      id: 'create-deployment',
-      trigger: 'afterCommand',
-      triggerCondition: (state) =>
-        !state.pods.some((p) => p.metadata.name === 'standalone' && !p.metadata.deletionTimestamp),
-      instruction:
-        'The standalone pod is gone. Now create a Deployment: "kubectl create deployment my-app --image=nginx:1.0 --replicas=2" and Reconcile until 2 pods are Running.',
+      question:
+        'Two containers in the same pod need to communicate. How do they reach each other?',
+      choices: [
+        'Via the Kubernetes Service DNS name that is automatically created for each pod',
+        'Via localhost — containers in a pod share the same network namespace, so they communicate on 127.0.0.1 with different ports',
+        'Through a shared ConfigMap that acts as a message bus between the containers',
+        'Using the pod\'s cluster IP address, which is assigned to the first container and forwarded to the second',
+      ],
+      correctIndex: 1,
+      explanation:
+        'Containers in the same pod share the same network namespace. This means they share the same IP address and can reach each other on localhost (127.0.0.1) ' +
+        'using different ports. This is one of the key reasons pods exist: to provide a shared execution environment for tightly-coupled containers. ' +
+        'A web server on port 80 and a logging sidecar on port 9090 can communicate directly via localhost without any networking setup. ' +
+        'This is also why two containers in the same pod cannot bind to the same port — they share the same network namespace.',
     },
   ],
-  goalCheck: (state) => {
-    const dep = state.deployments.find((d) => d.metadata.name === 'my-app');
-    if (!dep) return false;
-    if (state.tick === 0) return false;
-    const rs = state.replicaSets.find(
-      (r) =>
-        r.metadata.ownerReference?.uid === dep.metadata.uid &&
-        !r.metadata.deletionTimestamp
-    );
-    if (!rs) return false;
-    const pods = state.pods.filter(
-      (p) =>
-        p.metadata.ownerReference?.uid === rs.metadata.uid &&
-        p.status.phase === 'Running' &&
-        !p.metadata.deletionTimestamp
-    );
-    return pods.length === 2;
-  },
+  practices: [
+    {
+      title: 'Create and Compare Pods',
+      goalDescription:
+        'Create a standalone pod named "standalone" with image nginx:1.0 and delete it. Then create a Deployment named "my-app" with image nginx:1.0 and 2 replicas, and observe self-healing when you delete a managed pod.',
+      successMessage:
+        'Standalone pods vanish when deleted, but managed pods are replaced. Always use Deployments in production.',
+      initialState: () => ({
+        deployments: [],
+        replicaSets: [],
+        pods: [],
+        nodes: [],
+        services: [],
+        events: [],
+      }),
+      goals: [
+        {
+          description: 'Use "kubectl create pod" to create a standalone pod',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-pod'),
+        },
+        {
+          description: 'Use "kubectl create deployment" to create a managed deployment',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-deployment'),
+        },
+        {
+          description: 'Create a standalone pod named "standalone"',
+          check: (s: ClusterState) => s.pods.some(p => p.metadata.name === 'standalone' && !p.metadata.deletionTimestamp) || s.events.some(e => e.objectKind === 'Pod' && e.objectName === 'standalone'),
+        },
+        {
+          description: 'Create a Deployment named "my-app" with 2 replicas',
+          check: (s: ClusterState) => !!s.deployments.find(d => d.metadata.name === 'my-app'),
+        },
+        {
+          description: 'Get 2 Running pods managed by the "my-app" Deployment',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'my-app');
+            if (!dep) return false;
+            const rs = s.replicaSets.find(r => r.metadata.ownerReference?.uid === dep.metadata.uid && !r.metadata.deletionTimestamp);
+            if (!rs) return false;
+            return s.pods.filter(p => p.metadata.ownerReference?.uid === rs.metadata.uid && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length === 2;
+          },
+        },
+      ],
+      hints: [
+        { text: 'Start by creating a standalone pod — what command creates a single pod?' },
+        { text: 'kubectl create pod standalone --image=nginx:1.0', exact: true },
+        { text: 'After deleting the standalone pod, create a Deployment for self-healing.' },
+        { text: 'kubectl create deployment my-app --image=nginx:1.0 --replicas=2', exact: true },
+        { text: 'Delete one managed pod and reconcile to see the replacement appear.' },
+      ],
+      steps: [
+        {
+          id: 'create-standalone',
+          trigger: 'onLoad' as const,
+          instruction:
+            'Step 1: Create a standalone pod with "kubectl create pod standalone --image=nginx:1.0" and Reconcile until it\'s Running.',
+        },
+        {
+          id: 'create-deployment',
+          trigger: 'afterCommand' as const,
+          triggerCondition: (state: ClusterState) =>
+            !state.pods.some((p) => p.metadata.name === 'standalone' && !p.metadata.deletionTimestamp),
+          instruction:
+            'The standalone pod is gone. Now create a Deployment: "kubectl create deployment my-app --image=nginx:1.0 --replicas=2" and Reconcile until 2 pods are Running.',
+        },
+      ],
+    },
+    {
+      title: 'Investigate a Broken Pod',
+      goalDescription:
+        'A deployment has a crashing pod. Use describe and logs to diagnose the issue, then fix the image.',
+      successMessage:
+        'You diagnosed a CrashLoopBackOff using describe and logs, then fixed it. These two commands are your go-to tools for any pod issue.',
+      podFailureRules: { 'crash-app:1.0': 'CrashLoopBackOff' },
+      initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'crash-app:1.0';
+        const hash = templateHash({ image });
+
+        return {
+          deployments: [{
+            kind: 'Deployment' as const,
+            metadata: { name: 'broken-app', uid: depUid, labels: { app: 'broken-app' }, creationTimestamp: Date.now() - 120000 },
+            spec: {
+              replicas: 1, selector: { app: 'broken-app' },
+              template: { labels: { app: 'broken-app' }, spec: { image } },
+              strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+            },
+            status: { replicas: 1, updatedReplicas: 1, readyReplicas: 0, availableReplicas: 0, conditions: [] },
+          }],
+          replicaSets: [{
+            kind: 'ReplicaSet' as const,
+            metadata: {
+              name: `broken-app-${hash.slice(0, 10)}`, uid: rsUid,
+              labels: { app: 'broken-app', 'pod-template-hash': hash },
+              ownerReference: { kind: 'Deployment', name: 'broken-app', uid: depUid },
+              creationTimestamp: Date.now() - 120000,
+            },
+            spec: {
+              replicas: 1, selector: { app: 'broken-app', 'pod-template-hash': hash },
+              template: { labels: { app: 'broken-app', 'pod-template-hash': hash }, spec: { image } },
+            },
+            status: { replicas: 1, readyReplicas: 0 },
+          }],
+          pods: [{
+            kind: 'Pod' as const,
+            metadata: {
+              name: generatePodName(`broken-app-${hash.slice(0, 10)}`), uid: generateUID(),
+              labels: { app: 'broken-app', 'pod-template-hash': hash },
+              ownerReference: { kind: 'ReplicaSet', name: `broken-app-${hash.slice(0, 10)}`, uid: rsUid },
+              creationTimestamp: Date.now() - 30000,
+            },
+            spec: { image, failureMode: 'CrashLoopBackOff' as const, logs: ['[startup] Container started with image crash-app:1.0', '[fatal] Process exited with code 1', '[error] Back-off restarting failed container'] },
+            status: { phase: 'CrashLoopBackOff' as const, reason: 'CrashLoopBackOff', message: 'Back-off restarting failed container', restartCount: 3 },
+          }],
+          nodes: [{
+            kind: 'Node' as const,
+            metadata: { name: 'node-1', uid: generateUID(), labels: { 'kubernetes.io/hostname': 'node-1' }, creationTimestamp: Date.now() - 300000 },
+            spec: { capacity: { pods: 5 } },
+            status: { conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }], allocatedPods: 1 },
+          }],
+          services: [],
+          events: [{
+            timestamp: Date.now() - 20000, tick: 0, type: 'Warning' as const, reason: 'BackOff',
+            objectKind: 'Pod', objectName: 'broken-app-pod',
+            message: 'Back-off restarting failed container (restart count: 3)',
+          }],
+        };
+      },
+      goals: [
+        {
+          description: 'Use "kubectl describe pod" to investigate',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-pod'),
+        },
+        {
+          description: 'Use "kubectl logs" to read the error',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('logs'),
+        },
+        {
+          description: 'Use "kubectl set image" to fix the broken image',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
+        },
+        {
+          description: 'Fix the deployment image to "app:2.0"',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'broken-app');
+            return !!dep && dep.spec.template.spec.image === 'app:2.0';
+          },
+        },
+        {
+          description: 'Pod Running with the fixed image',
+          check: (s: ClusterState) => s.pods.some(p => p.spec.image === 'app:2.0' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp),
+        },
+      ],
+      hints: [
+        { text: 'What does "kubectl get pods" show? Look at the STATUS column.' },
+        { text: 'Use "kubectl describe pod <name>" to see pod events and details.' },
+        { text: 'Use "kubectl logs <name>" to see what the container printed before crashing.' },
+        { text: 'The image is bad. Fix it with kubectl set image.' },
+        { text: 'kubectl set image deployment/broken-app broken-app=app:2.0', exact: true },
+      ],
+    },
+  ],
 };
