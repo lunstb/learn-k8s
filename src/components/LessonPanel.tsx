@@ -23,7 +23,6 @@ export function LessonPanel() {
   const completedLessonIds = useSimulatorStore((s) => s.completedLessonIds);
   const loadLesson = useSimulatorStore((s) => s.loadLesson);
   const goToPhase = useSimulatorStore((s) => s.goToPhase);
-  const cluster = useSimulatorStore((s) => s.cluster);
   const hintIndex = useSimulatorStore((s) => s.hintIndex);
   const revealNextHint = useSimulatorStore((s) => s.revealNextHint);
   const currentExerciseIndex = useSimulatorStore((s) => s.currentExerciseIndex);
@@ -155,7 +154,6 @@ export function LessonPanel() {
                 <GoalsChecklist
                   lesson={currentLesson}
                   activeExercise={activeExercise}
-                  cluster={cluster}
                   hintIndex={hintIndex}
                   onRevealHint={revealNextHint}
                   lessonCompleted={lessonCompleted}
@@ -198,7 +196,6 @@ export function LessonPanel() {
 function GoalsChecklist({
   lesson,
   activeExercise,
-  cluster,
   hintIndex,
   onRevealHint,
   lessonCompleted,
@@ -206,7 +203,6 @@ function GoalsChecklist({
 }: {
   lesson: NonNullable<ReturnType<typeof useSimulatorStore.getState>['currentLesson']>;
   activeExercise: PracticeExercise | null;
-  cluster: ReturnType<typeof useSimulatorStore.getState>['cluster'];
   hintIndex: number;
   onRevealHint: () => void;
   lessonCompleted: boolean;

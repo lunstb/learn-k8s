@@ -5,7 +5,6 @@ import { executeCommand } from '../commands/executor';
 export function YamlEditor() {
   const yamlContent = useSimulatorStore((s) => s.yamlEditorContent);
   const setYamlContent = useSimulatorStore((s) => s.setYamlEditorContent);
-  const setActiveTab = useSimulatorStore((s) => s.setActiveBottomTab);
   const appendOutput = useSimulatorStore((s) => s.appendOutput);
   const currentLesson = useSimulatorStore((s) => s.currentLesson);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
