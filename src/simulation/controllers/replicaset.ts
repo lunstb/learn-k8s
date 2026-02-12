@@ -73,6 +73,31 @@ export function reconcileReplicaSets(state: ClusterState): ReconcileResult {
       });
     }
 
+    // Release owned pods whose labels no longer match the selector (orphan them)
+    const mismatchedPods = pods.filter(
+      (p) =>
+        p.metadata.ownerReference?.uid === rs.metadata.uid &&
+        !p.metadata.deletionTimestamp &&
+        !labelsMatch(rs.spec.selector, p.metadata.labels)
+    );
+    for (const pod of mismatchedPods) {
+      pod.metadata.ownerReference = undefined;
+      actions.push({
+        controller: 'ReplicaSetController',
+        action: 'release-pod',
+        details: `Released Pod ${pod.metadata.name} from ReplicaSet ${rs.metadata.name} (labels no longer match selector)`,
+      });
+      events.push({
+        timestamp: Date.now(),
+        tick: currentTick,
+        type: 'Normal',
+        reason: 'Released',
+        objectKind: 'ReplicaSet',
+        objectName: rs.metadata.name,
+        message: `Released pod "${pod.metadata.name}" - labels no longer match selector`,
+      });
+    }
+
     // Find owned pods (not terminating)
     const ownedPods = pods.filter(
       (p) =>
