@@ -106,7 +106,7 @@ export const lessonDebugging: Lesson = {
       ],
       correctIndex: 3,
       explanation:
-        'A pod can briefly show "Running" between crashes during CrashLoopBackOff. The status alternates between Running and CrashLoopBackOff as Kubernetes restarts the container with exponential backoff delays (10s, 20s, 40s, up to 5min). A restartCount of 47 means the container has crashed 47 times. Option D is plausible but would typically show in events as "Unhealthy" warnings -- the high restartCount with no liveness probe events points to the app itself crashing.',
+        'A pod can briefly show "Running" between crashes during CrashLoopBackOff. The status alternates between Running and CrashLoopBackOff as Kubernetes restarts the container with exponential backoff delays (10s, 20s, 40s, up to 5min). A restartCount of 47 means the container has crashed 47 times. A misconfigured liveness probe is plausible but would typically show in events as "Unhealthy" warnings -- the high restartCount with no liveness probe events points to the app itself crashing.',
     },
     {
       question:
@@ -204,7 +204,7 @@ export const lessonDebugging: Lesson = {
       },
       goals: [
         {
-          description: 'Use "kubectl set image" to fix the image typo',
+          description: 'Use "kubectl set image" to change the deployment image',
           check: (s: ClusterState) => (s._commandsUsed ?? []).includes('set-image'),
         },
         {
@@ -261,7 +261,7 @@ export const lessonDebugging: Lesson = {
             ownerReference: { kind: 'ReplicaSet', name: `api-backend-${hash.slice(0, 10)}`, uid: rsUid },
             creationTimestamp: Date.now() - 30000,
           },
-          spec: { image, failureMode: 'CrashLoopBackOff' as const, logs: ['[startup] Container started with image crash-app:1.0', '[fatal] Process exited with code 1', '[error] Back-off restarting failed container'] },
+          spec: { image, failureMode: 'CrashLoopBackOff' as const, logs: ['[error] ModuleNotFoundError: No module named "handler"', '[hint] This bug was fixed in api:2.0'] },
           status: { phase: 'CrashLoopBackOff' as const, reason: 'CrashLoopBackOff', message: 'Back-off restarting failed container', restartCount: 4 },
         }));
 

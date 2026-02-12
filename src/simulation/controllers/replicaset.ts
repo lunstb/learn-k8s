@@ -1,5 +1,5 @@
 import type { ClusterState, Pod, ReplicaSet, ControllerAction, SimEvent } from '../types';
-import { generateUID, generatePodName } from '../utils';
+import { generateUID, generatePodName, labelsMatch } from '../utils';
 
 interface ReconcileResult {
   replicaSets: ReplicaSet[];
@@ -42,6 +42,35 @@ export function reconcileReplicaSets(state: ClusterState): ReconcileResult {
         });
       }
       continue;
+    }
+
+    // Adopt orphan pods that match the RS label selector but have no owner
+    const orphans = pods.filter(
+      (p) =>
+        !p.metadata.ownerReference &&
+        !p.metadata.deletionTimestamp &&
+        labelsMatch(rs.spec.selector, p.metadata.labels)
+    );
+    for (const orphan of orphans) {
+      orphan.metadata.ownerReference = {
+        kind: 'ReplicaSet',
+        name: rs.metadata.name,
+        uid: rs.metadata.uid,
+      };
+      actions.push({
+        controller: 'ReplicaSetController',
+        action: 'adopt-pod',
+        details: `Adopted orphan Pod ${orphan.metadata.name} into ReplicaSet ${rs.metadata.name} (labels match selector)`,
+      });
+      events.push({
+        timestamp: Date.now(),
+        tick: currentTick,
+        type: 'Normal',
+        reason: 'Adopted',
+        objectKind: 'ReplicaSet',
+        objectName: rs.metadata.name,
+        message: `Adopted pod "${orphan.metadata.name}" with matching labels`,
+      });
     }
 
     // Find owned pods (not terminating)
@@ -124,7 +153,7 @@ export function reconcileReplicaSets(state: ClusterState): ReconcileResult {
         !p.metadata.deletionTimestamp
     );
     const runningPods = nonTerminatingPods.filter(
-      (p) => p.status.phase === 'Running'
+      (p) => p.status.phase === 'Running' && p.status.ready !== false
     );
     rs.status = {
       replicas: nonTerminatingPods.length,

@@ -114,6 +114,20 @@ export const lessonProbes: Lesson = {
         keyTakeaway:
           'Tune probe parameters to match your application: initialDelaySeconds for startup time, periodSeconds for check frequency, failureThreshold for tolerance. Bad settings cause false positives or slow detection.',
       },
+      {
+        title: 'Startup Probes: Protecting Slow-Starting Containers',
+        content:
+          'Kubernetes also has startup probes, designed for slow-starting applications. ' +
+          'A startup probe runs first, and while it is active, liveness and readiness probes are disabled. ' +
+          'This prevents liveness probes from killing containers that are still initializing.\n\n' +
+          'Once the startup probe succeeds, it is never run again, and liveness and readiness probes take over. ' +
+          'This is especially useful for legacy applications or Java services with long initialization times — ' +
+          'you can set a generous startup probe (e.g., failureThreshold=30, periodSeconds=10 for a 5-minute window) ' +
+          'without weakening the liveness probe that monitors the container during steady-state operation.\n\n' +
+          'The Startup Probes & Graceful Shutdown lesson later in the curriculum covers startup probes in depth, including configuration patterns and how they interact with graceful shutdown.',
+        keyTakeaway:
+          'Startup probes protect slow-starting containers from being killed by liveness probes during initialization. Once the startup probe passes, it is disabled and liveness/readiness probes take over.',
+      },
     ],
   },
   quiz: [

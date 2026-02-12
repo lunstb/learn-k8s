@@ -222,7 +222,7 @@ export const lessonInitContainers: Lesson = {
     {
       title: 'Use Init Containers',
       goalDescription:
-        'Apply a Pod with an init container and observe the init → main container lifecycle. Then see what happens when an init container fails.',
+        'Apply a pod with an init container and observe the sequential lifecycle — the init container must complete before the main container starts.',
       successMessage:
         'You observed init containers running sequentially before the main container. Failed init containers block the pod from starting — a critical pattern for enforcing startup dependencies.',
       yamlTemplate: `apiVersion: v1

@@ -277,24 +277,22 @@ export const lessonReplicaSets: Lesson = {
     {
       title: 'Label Selector Adoption',
       goalDescription:
-        'Create a standalone pod and label it to match the Deployment\'s selector. Watch the ReplicaSet adopt it and then reconcile the excess. Final state: 2 Running pods.',
+        'Create a standalone pod and label it to match the ReplicaSet\'s selector. Watch the RS adopt it and then reconcile the excess. Final state: 2 Running pods.',
       successMessage:
         'The RS adopted the labeled pod — and then terminated an excess pod to maintain the desired count of 2. Label selectors are loose coupling: any pod with matching labels counts.',
       initialState: () => {
-        const depUid = generateUID();
         const rsUid = generateUID();
         const image = 'nginx:1.0';
-        const hash = templateHash({ image });
 
         const pods = Array.from({ length: 2 }, () => ({
           kind: 'Pod' as const,
           metadata: {
-            name: generatePodName(`web-app-${hash.slice(0, 10)}`),
+            name: generatePodName('web-app'),
             uid: generateUID(),
-            labels: { app: 'web-app', 'pod-template-hash': hash },
+            labels: { app: 'web-app' },
             ownerReference: {
               kind: 'ReplicaSet',
-              name: `web-app-${hash.slice(0, 10)}`,
+              name: 'web-app',
               uid: rsUid,
             },
             creationTimestamp: Date.now() - 60000,
@@ -304,12 +302,13 @@ export const lessonReplicaSets: Lesson = {
         }));
 
         return {
-          deployments: [
+          deployments: [],
+          replicaSets: [
             {
-              kind: 'Deployment' as const,
+              kind: 'ReplicaSet' as const,
               metadata: {
                 name: 'web-app',
-                uid: depUid,
+                uid: rsUid,
                 labels: { app: 'web-app' },
                 creationTimestamp: Date.now() - 120000,
               },
@@ -318,38 +317,6 @@ export const lessonReplicaSets: Lesson = {
                 selector: { app: 'web-app' },
                 template: {
                   labels: { app: 'web-app' },
-                  spec: { image },
-                },
-                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-              },
-              status: {
-                replicas: 2,
-                updatedReplicas: 2,
-                readyReplicas: 2,
-                availableReplicas: 2,
-                conditions: [{ type: 'Available', status: 'True' }],
-              },
-            },
-          ],
-          replicaSets: [
-            {
-              kind: 'ReplicaSet' as const,
-              metadata: {
-                name: `web-app-${hash.slice(0, 10)}`,
-                uid: rsUid,
-                labels: { app: 'web-app', 'pod-template-hash': hash },
-                ownerReference: {
-                  kind: 'Deployment',
-                  name: 'web-app',
-                  uid: depUid,
-                },
-                creationTimestamp: Date.now() - 120000,
-              },
-              spec: {
-                replicas: 2,
-                selector: { app: 'web-app', 'pod-template-hash': hash },
-                template: {
-                  labels: { app: 'web-app', 'pod-template-hash': hash },
                   spec: { image },
                 },
               },
@@ -382,10 +349,14 @@ export const lessonReplicaSets: Lesson = {
         {
           description: 'Reconcile — RS sees excess and trims back to 2 Running pods',
           check: (s: ClusterState) => {
-            const dep = s.deployments.find(d => d.metadata.name === 'web-app');
-            if (!dep) return false;
-            const running = s.pods.filter(p => p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
-            return running.length === 2 && s.tick > 0;
+            const rs = s.replicaSets.find(r => r.metadata.name === 'web-app');
+            if (!rs) return false;
+            const ownedRunning = s.pods.filter(p =>
+              p.metadata.ownerReference?.uid === rs.metadata.uid &&
+              p.status.phase === 'Running' &&
+              !p.metadata.deletionTimestamp
+            );
+            return ownedRunning.length === 2 && s.tick > 0;
           },
         },
       ],
@@ -398,7 +369,7 @@ export const lessonReplicaSets: Lesson = {
       steps: [{
         id: 'intro-labels',
         trigger: 'onLoad' as const,
-        instruction: 'The Deployment "web-app" has 2 replicas. Create a standalone pod "extra", then label it with app=web-app. Reconcile and watch what happens when the RS sees 3 pods but only wants 2.',
+        instruction: 'The ReplicaSet "web-app" has 2 replicas. Create a standalone pod "extra", then label it with app=web-app. Reconcile and watch what happens when the RS sees 3 pods but only wants 2.',
       }],
     },
   ],

@@ -338,6 +338,7 @@ export const lessonCapstoneMultiservice: Lesson = {
             image: workerBadImage,
             nodeName: 'node-2',
             failureMode: 'CrashLoopBackOff' as const,
+            logs: ['[fatal] Module "workerr" not found — did you mean "worker"? Check image name.', 'Process exited with code 1'],
           },
           status: {
             phase: 'CrashLoopBackOff' as const,
@@ -598,6 +599,10 @@ export const lessonCapstoneMultiservice: Lesson = {
           cronJobs: [],
           hpas: [],
           helmReleases: [],
+          storageClasses: [],
+          persistentVolumes: [],
+          persistentVolumeClaims: [],
+          podDisruptionBudgets: [],
         };
       },
       goalCheck: (state) => {

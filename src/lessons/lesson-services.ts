@@ -126,9 +126,9 @@ export const lessonServices: Lesson = {
       ],
       correctIndex: 2,
       explanation:
-        'The endpoints controller filters on two criteria: the pod must match the Service selector AND the pod must be in the Running phase. ' +
+        'The endpoints controller filters on multiple criteria: the pod must match the Service selector AND the pod must be Running AND Ready (passing readiness probes if configured). ' +
         'Pending pods are not ready to accept traffic (containers may still be starting). Terminating pods are shutting down and will soon be gone. ' +
-        'Only the 3 Running pods are registered as endpoints. This automatic filtering is what prevents traffic from being sent to pods that cannot handle it.',
+        'Only the 3 Running pods are registered as endpoints (assuming they are Ready, which is the default when no readiness probe is configured). This automatic filtering is what prevents traffic from being sent to pods that cannot handle it.',
     },
     {
       question:
@@ -229,7 +229,7 @@ spec:
             ownerReference: { kind: 'ReplicaSet', name: `web-app-${hash.slice(0, 10)}`, uid: rsUid },
             creationTimestamp: Date.now() - 60000,
           },
-          spec: { image },
+          spec: { image, logs: ['[startup] Server listening on port 8080', '[info] Ready to accept connections'] },
           status: { phase: 'Running' as const },
         }));
 

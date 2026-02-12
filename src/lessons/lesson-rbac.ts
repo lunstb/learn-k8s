@@ -145,9 +145,9 @@ export const lessonRBAC: Lesson = {
       correctIndex: 0,
       explanation:
         'The minimum setup is a namespace-scoped Role (with get/list on pods) and a RoleBinding in the same namespace. ' +
-        'Option B (ClusterRole + RoleBinding) also works and is a common pattern for reuse, but it is not the minimum — ' +
-        'a ClusterRole has broader scope than necessary. Option A (ClusterRoleBinding) would grant the permission cluster-wide, ' +
-        'violating least privilege. And by default, ServiceAccounts have no permissions to list pods.',
+        'A ClusterRole + ClusterRoleBinding would grant the permission cluster-wide, violating least privilege. ' +
+        'A ClusterRole + RoleBinding also works and is a common pattern for reuse, but a ClusterRole has broader scope than necessary for this case. ' +
+        'And by default, ServiceAccounts have no permissions to list pods.',
     },
     {
       question:
@@ -197,9 +197,9 @@ export const lessonRBAC: Lesson = {
       explanation:
         'Since the "oncall" group needs the same pod-read access in ALL namespaces, a single ClusterRoleBinding with a ' +
         'ClusterRole is the most maintainable solution. When a new namespace is added, it is automatically covered. ' +
-        'Option B (ClusterRole + per-namespace RoleBindings) also works but requires creating a new RoleBinding for each new namespace — ' +
-        'preferred when you need different access levels per namespace. Option A duplicates Role definitions across every namespace. ' +
-        'Option D describes a non-standard pattern that adds unnecessary complexity.',
+        'Using a ClusterRole with per-namespace RoleBindings also works but requires creating a new RoleBinding for each new namespace — ' +
+        'preferred when you need different access levels per namespace. Creating 5 identical Roles duplicates definitions across every namespace. ' +
+        'Role aggregation describes a non-standard pattern that adds unnecessary complexity.',
     },
   ],
 };

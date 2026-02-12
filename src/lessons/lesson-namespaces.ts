@@ -1,6 +1,6 @@
 import type { Lesson } from './types';
 import type { ClusterState } from '../simulation/types';
-import { generateUID } from '../simulation/utils';
+import { generateUID, generatePodName, templateHash } from '../simulation/utils';
 
 export const lessonNamespaces: Lesson = {
   id: 9,
@@ -9,9 +9,9 @@ export const lessonNamespaces: Lesson = {
     'Namespaces partition a single cluster into logical groups, providing scope for names and a foundation for resource isolation.',
   mode: 'full',
   goalDescription:
-    'Create a namespace called "dev" and deploy a "web" Deployment with image nginx and 2 Running replicas in the default namespace.',
+    'Create a namespace called "dev", deploy an "api" Deployment into it, and verify it is isolated from the default namespace.',
   successMessage:
-    'You now have multiple namespaces and a healthy deployment. Namespaces let teams share a cluster without stepping on each other.',
+    'Namespaces isolate resources. The "api" deployment exists in "dev" and is invisible from default. Each namespace is an independent scope for names, RBAC, and resource quotas.',
   lecture: {
     sections: [
       {
@@ -195,43 +195,134 @@ export const lessonNamespaces: Lesson = {
   ],
   practices: [
     {
-      title: 'Create a Namespace and Deploy',
+      title: 'Deploy Across Namespaces',
       goalDescription:
-        'Create a namespace called "dev" and deploy a "web" Deployment with image nginx and 2 Running replicas in the default namespace.',
+        'Create a namespace "dev", deploy an "api" Deployment into it using YAML with metadata.namespace, and verify it exists only in the dev namespace — not in default.',
       successMessage:
-        'You now have multiple namespaces and a healthy deployment. Namespaces let teams share a cluster without stepping on each other.',
+        'Namespaces isolate resources. The "api" deployment exists in "dev" and is invisible from default. Each namespace is an independent scope for names, RBAC, and resource quotas.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: dev
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: nginx:1.0`,
       hints: [
-        { text: 'Use kubectl create namespace to create a new namespace.' },
-        { text: 'kubectl create namespace dev', exact: true },
-        { text: 'Now create a deployment in the default namespace.' },
-        { text: 'kubectl create deployment web --image=nginx --replicas=2', exact: true },
+        { text: 'Create the dev namespace: kubectl create namespace dev', exact: true },
+        { text: 'Use the YAML Editor to apply the deployment — notice metadata.namespace: dev in the YAML.', exact: false },
+        { text: 'Check pods: kubectl get pods to confirm the "api" pods don\'t show in default.', exact: false },
+        { text: 'The "api" deployment was created in the "dev" namespace via the YAML metadata.namespace field.' },
       ],
       goals: [
         {
-          description: 'Create the "dev" namespace',
-          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-namespace'),
+          description: 'Create namespace "dev"',
+          check: (s: ClusterState) =>
+            (s._commandsUsed ?? []).includes('create-namespace') &&
+            s.namespaces.some(n => n.metadata.name === 'dev'),
         },
         {
-          description: 'Create the "web" deployment',
-          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('create-deployment'),
+          description: 'Deploy "api" in the "dev" namespace',
+          check: (s: ClusterState) =>
+            !!s.deployments.find(d => d.metadata.name === 'api' && d.metadata.namespace === 'dev'),
         },
         {
-          description: 'Namespace "dev" exists',
-          check: (s: ClusterState) => s.namespaces.some(ns => ns.metadata.name === 'dev'),
+          description: 'Use "kubectl get pods" to check pod visibility',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
         },
         {
-          description: '"web" Deployment has 2 Running replicas',
-          check: (s: ClusterState) => {
-            const dep = s.deployments.find(d => d.metadata.name === 'web');
-            return !!dep && (dep.status.readyReplicas || 0) >= 2;
-          },
+          description: '"api" deployment is NOT in the default namespace',
+          check: (s: ClusterState) =>
+            !s.deployments.find(d => d.metadata.name === 'api' && (!d.metadata.namespace || d.metadata.namespace === 'default')),
         },
       ],
       initialState: () => {
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'nginx:1.0';
+        const hash = templateHash({ image });
+
+        const pods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'web', 'pod-template-hash': hash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `web-${hash.slice(0, 10)}`,
+              uid: rsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image },
+          status: { phase: 'Running' as const },
+        }));
+
         return {
-          deployments: [],
-          replicaSets: [],
-          pods: [],
+          deployments: [
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'web',
+                uid: depUid,
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web' },
+                template: {
+                  labels: { app: 'web' },
+                  spec: { image },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
+            },
+          ],
+          replicaSets: [
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `web-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'web', 'pod-template-hash': hash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'web',
+                  uid: depUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'web', 'pod-template-hash': hash },
+                template: {
+                  labels: { app: 'web', 'pod-template-hash': hash },
+                  spec: { image },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
+            },
+          ],
+          pods,
           nodes: [
             {
               kind: 'Node' as const,
@@ -244,7 +335,7 @@ export const lessonNamespaces: Lesson = {
               spec: { capacity: { pods: 5 } },
               status: {
                 conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-                allocatedPods: 0,
+                allocatedPods: 1,
               },
             },
             {
@@ -258,7 +349,7 @@ export const lessonNamespaces: Lesson = {
               spec: { capacity: { pods: 5 } },
               status: {
                 conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-                allocatedPods: 0,
+                allocatedPods: 1,
               },
             },
           ],
@@ -288,13 +379,20 @@ export const lessonNamespaces: Lesson = {
         };
       },
       goalCheck: (state) => {
-        // Need at least 2 namespaces (default + dev)
-        if (state.namespaces.length < 2) return false;
+        // Need dev namespace
+        const hasDev = state.namespaces.some(n => n.metadata.name === 'dev');
+        if (!hasDev) return false;
 
-        // Need a deployment with readyReplicas >= 2
-        const dep = state.deployments.find((d) => d.metadata.name === 'web');
-        if (!dep) return false;
-        if ((dep.status.readyReplicas || 0) < 2) return false;
+        // Need "api" deployment in dev namespace
+        const apiInDev = state.deployments.find(d => d.metadata.name === 'api' && d.metadata.namespace === 'dev');
+        if (!apiInDev) return false;
+
+        // "api" must NOT be in default namespace
+        const apiInDefault = state.deployments.find(d => d.metadata.name === 'api' && (!d.metadata.namespace || d.metadata.namespace === 'default'));
+        if (apiInDefault) return false;
+
+        // Must have used get-pods
+        if (!(state._commandsUsed ?? []).includes('get-pods')) return false;
 
         return true;
       },

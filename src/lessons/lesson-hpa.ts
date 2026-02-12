@@ -189,8 +189,8 @@ spec:
       ],
       goals: [
         {
-          description: 'Create an HPA with "kubectl autoscale"',
-          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('autoscale'),
+          description: 'Create an HPA with "kubectl autoscale" or "kubectl apply"',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('autoscale') || (s._commandsUsed ?? []).includes('apply'),
         },
         {
           description: 'Create an HPA for the "web" Deployment (min=2, max=8, cpu=50%)',

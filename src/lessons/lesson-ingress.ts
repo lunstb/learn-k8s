@@ -198,19 +198,21 @@ export const lessonIngress: Lesson = {
   ],
   practices: [
     {
-      title: 'Create an Ingress Route',
+      title: 'Create a Multi-Path Ingress',
       goalDescription:
-        'Create an Ingress named "web-ing" that routes traffic from myapp.example.com to the "web-svc" Service on port 80.',
+        'Two backend services exist: "web-svc" and "api-svc". Create an Ingress named "web-ing" that routes ' +
+        'myapp.example.com/ to "web-svc" and myapp.example.com/api to "api-svc", both on port 80.',
       successMessage:
-        'You created an Ingress. External traffic to your specified host/path will now be routed through the Ingress controller ' +
-        'to the "web-svc" Service and its pods. This is how you expose HTTP applications to the outside world.',
+        'You created an Ingress with path-based routing. External traffic to "/" goes to the web frontend, ' +
+        'while "/api" goes to the API backend. This is the standard pattern for serving a frontend and ' +
+        'API from the same domain — one Ingress controller handles both routes.',
       yamlTemplate: `apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: web-ing
 spec:
   rules:
-  - host: ???
+  - host: myapp.example.com
     http:
       paths:
       - path: /
@@ -218,43 +220,86 @@ spec:
           service:
             name: ???
             port:
-              number: ???`,
+              number: 80
+      - path: /api
+        backend:
+          service:
+            name: ???
+            port:
+              number: 80`,
       hints: [
-        { text: 'Switch to the YAML Editor tab — fill in host as "myapp.example.com", service name as "web-svc", and port as 80.' },
-        { text: 'Or use the terminal: kubectl create ingress web-ing --rule=myapp.example.com/=web-svc:80', exact: false },
+        { text: 'Run "kubectl get services" to see the available backend services before creating the Ingress.' },
+        { text: 'In the YAML template, set the first service name to "web-svc" for path "/" and the second to "api-svc" for path "/api".' },
+        { text: 'Or use the terminal: kubectl create ingress web-ing --rule=myapp.example.com/=web-svc:80 (note: this only creates one rule — use YAML for multi-path)', exact: false },
+        { text: 'After applying, run "kubectl get ingress" to verify the Ingress was created with both rules.' },
       ],
       goals: [
+        {
+          description: 'Use "kubectl get services" to see available backends',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-services'),
+        },
         {
           description: 'Use "kubectl apply" or "kubectl create ingress" to create the Ingress',
           check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply') || (s._commandsUsed ?? []).includes('create-ingress'),
         },
         {
-          description: 'Create an Ingress routing myapp.example.com to "web-svc"',
+          description: 'Ingress routes myapp.example.com/ to "web-svc"',
           check: (s: ClusterState) => {
             return s.ingresses.some(ing => ing.spec.rules.some(r => r.serviceName === 'web-svc' && r.host === 'myapp.example.com'));
           },
         },
+        {
+          description: 'Ingress routes myapp.example.com/api to "api-svc"',
+          check: (s: ClusterState) => {
+            return s.ingresses.some(ing => ing.spec.rules.some(r => r.serviceName === 'api-svc' && r.host === 'myapp.example.com' && r.path === '/api'));
+          },
+        },
+        {
+          description: 'Verify Ingress was created',
+          check: (s: ClusterState) => s.ingresses.length > 0,
+        },
       ],
       initialState: () => {
-        const depUid = generateUID();
-        const rsUid = generateUID();
-        const image = 'nginx:1.0';
-        const hash = templateHash({ image });
+        const webDepUid = generateUID();
+        const webRsUid = generateUID();
+        const apiDepUid = generateUID();
+        const apiRsUid = generateUID();
+        const webImage = 'nginx:1.0';
+        const apiImage = 'node-api:1.0';
+        const webHash = templateHash({ image: webImage });
+        const apiHash = templateHash({ image: apiImage });
 
-        const pods = Array.from({ length: 2 }, () => ({
+        const webPods = Array.from({ length: 2 }, () => ({
           kind: 'Pod' as const,
           metadata: {
-            name: generatePodName(`web-${hash.slice(0, 10)}`),
+            name: generatePodName(`web-${webHash.slice(0, 10)}`),
             uid: generateUID(),
-            labels: { app: 'web', 'pod-template-hash': hash },
+            labels: { app: 'web', 'pod-template-hash': webHash },
             ownerReference: {
               kind: 'ReplicaSet',
-              name: `web-${hash.slice(0, 10)}`,
-              uid: rsUid,
+              name: `web-${webHash.slice(0, 10)}`,
+              uid: webRsUid,
             },
             creationTimestamp: Date.now() - 60000,
           },
-          spec: { image },
+          spec: { image: webImage },
+          status: { phase: 'Running' as const },
+        }));
+
+        const apiPods = Array.from({ length: 2 }, () => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: generatePodName(`api-${apiHash.slice(0, 10)}`),
+            uid: generateUID(),
+            labels: { app: 'api', 'pod-template-hash': apiHash },
+            ownerReference: {
+              kind: 'ReplicaSet',
+              name: `api-${apiHash.slice(0, 10)}`,
+              uid: apiRsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image: apiImage },
           status: { phase: 'Running' as const },
         }));
 
@@ -264,7 +309,7 @@ spec:
               kind: 'Deployment' as const,
               metadata: {
                 name: 'web',
-                uid: depUid,
+                uid: webDepUid,
                 labels: { app: 'web' },
                 creationTimestamp: Date.now() - 120000,
               },
@@ -273,7 +318,32 @@ spec:
                 selector: { app: 'web' },
                 template: {
                   labels: { app: 'web' },
-                  spec: { image },
+                  spec: { image: webImage },
+                },
+                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
+              },
+              status: {
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
+              },
+            },
+            {
+              kind: 'Deployment' as const,
+              metadata: {
+                name: 'api',
+                uid: apiDepUid,
+                labels: { app: 'api' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'api' },
+                template: {
+                  labels: { app: 'api' },
+                  spec: { image: apiImage },
                 },
                 strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
               },
@@ -290,28 +360,51 @@ spec:
             {
               kind: 'ReplicaSet' as const,
               metadata: {
-                name: `web-${hash.slice(0, 10)}`,
-                uid: rsUid,
-                labels: { app: 'web', 'pod-template-hash': hash },
+                name: `web-${webHash.slice(0, 10)}`,
+                uid: webRsUid,
+                labels: { app: 'web', 'pod-template-hash': webHash },
                 ownerReference: {
                   kind: 'Deployment',
                   name: 'web',
-                  uid: depUid,
+                  uid: webDepUid,
                 },
                 creationTimestamp: Date.now() - 120000,
               },
               spec: {
                 replicas: 2,
-                selector: { app: 'web', 'pod-template-hash': hash },
+                selector: { app: 'web', 'pod-template-hash': webHash },
                 template: {
-                  labels: { app: 'web', 'pod-template-hash': hash },
-                  spec: { image },
+                  labels: { app: 'web', 'pod-template-hash': webHash },
+                  spec: { image: webImage },
+                },
+              },
+              status: { replicas: 2, readyReplicas: 2 },
+            },
+            {
+              kind: 'ReplicaSet' as const,
+              metadata: {
+                name: `api-${apiHash.slice(0, 10)}`,
+                uid: apiRsUid,
+                labels: { app: 'api', 'pod-template-hash': apiHash },
+                ownerReference: {
+                  kind: 'Deployment',
+                  name: 'api',
+                  uid: apiDepUid,
+                },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: {
+                replicas: 2,
+                selector: { app: 'api', 'pod-template-hash': apiHash },
+                template: {
+                  labels: { app: 'api', 'pod-template-hash': apiHash },
+                  spec: { image: apiImage },
                 },
               },
               status: { replicas: 2, readyReplicas: 2 },
             },
           ],
-          pods,
+          pods: [...webPods, ...apiPods],
           nodes: [
             {
               kind: 'Node' as const,
@@ -324,7 +417,7 @@ spec:
               spec: { capacity: { pods: 5 } },
               status: {
                 conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-                allocatedPods: 1,
+                allocatedPods: 2,
               },
             },
             {
@@ -338,7 +431,7 @@ spec:
               spec: { capacity: { pods: 5 } },
               status: {
                 conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-                allocatedPods: 1,
+                allocatedPods: 2,
               },
             },
           ],
@@ -352,7 +445,18 @@ spec:
                 creationTimestamp: Date.now() - 120000,
               },
               spec: { selector: { app: 'web' }, port: 80 },
-              status: { endpoints: pods.map((p) => p.metadata.name) },
+              status: { endpoints: webPods.map((p) => p.metadata.name) },
+            },
+            {
+              kind: 'Service' as const,
+              metadata: {
+                name: 'api-svc',
+                uid: generateUID(),
+                labels: {},
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: { selector: { app: 'api' }, port: 80 },
+              status: { endpoints: apiPods.map((p) => p.metadata.name) },
             },
           ],
           events: [],
@@ -369,9 +473,10 @@ spec:
         };
       },
       goalCheck: (state: ClusterState) => {
-        // Need at least 1 ingress that routes to web-svc
+        // Need an ingress that routes to both web-svc and api-svc
         const ingress = state.ingresses.find((ing) =>
-          ing.spec.rules.some((r) => r.serviceName === 'web-svc')
+          ing.spec.rules.some((r) => r.serviceName === 'web-svc' && r.host === 'myapp.example.com') &&
+          ing.spec.rules.some((r) => r.serviceName === 'api-svc' && r.host === 'myapp.example.com' && r.path === '/api')
         );
         return !!ingress;
       },

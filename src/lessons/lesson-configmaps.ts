@@ -160,7 +160,7 @@ export const lessonConfigMaps: Lesson = {
       ],
       correctIndex: 1,
       explanation:
-        'If a pod references a ConfigMap (or Secret) that does not exist, the container cannot be created and the pod enters "CreateContainerConfigError" status. This is a hard dependency -- the kubelet will not start the container without the referenced ConfigMap. Option A is a real issue (keys with dots or dashes become invalid env vars), but it produces a different error. Option D is also valid in theory, but would produce the same "not found" behavior since ConfigMaps are namespace-scoped. The key lesson: always create ConfigMaps before deploying pods that depend on them.',
+        'If a pod references a ConfigMap (or Secret) that does not exist, the container cannot be created and the pod enters "CreateContainerConfigError" status. This is a hard dependency -- the kubelet will not start the container without the referenced ConfigMap. Invalid env var name characters (keys with dots or dashes) are a real issue, but that produces a different error. Missing RBAC permissions for ConfigMap access is also valid in theory, but ConfigMaps are namespace-scoped and the most common cause is simply a missing ConfigMap. The key lesson: always create ConfigMaps before deploying pods that depend on them.',
     },
     {
       question:
@@ -173,7 +173,7 @@ export const lessonConfigMaps: Lesson = {
       ],
       correctIndex: 2,
       explanation:
-        'Since the application already watches for file changes, mounting the ConfigMap as a volume is the ideal approach. When you update the ConfigMap, the kubelet syncs the mounted files (with a brief delay), and the app detects and applies the change -- no restart needed. Option A would require a restart since env vars are immutable. Options B and D are manual, error-prone, and would be lost when pods are rescheduled. This is the main advantage of volume-mounted ConfigMaps when your app supports hot-reloading.',
+        'Since the application already watches for file changes, mounting the ConfigMap as a volume is the ideal approach. When you update the ConfigMap, the kubelet syncs the mounted files (with a brief delay), and the app detects and applies the change -- no restart needed. Storing the value as an env var and doing a rollout restart would require a restart since env vars are immutable. Using "kubectl exec" to edit files directly and baking config into a new container image are both manual, error-prone, and would be lost when pods are rescheduled. This is the main advantage of volume-mounted ConfigMaps when your app supports hot-reloading.',
     },
   ],
   practices: [

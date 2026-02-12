@@ -279,7 +279,7 @@ export const lessonPods: Lesson = {
               ownerReference: { kind: 'ReplicaSet', name: `broken-app-${hash.slice(0, 10)}`, uid: rsUid },
               creationTimestamp: Date.now() - 30000,
             },
-            spec: { image, failureMode: 'CrashLoopBackOff' as const, logs: ['[startup] Container started with image crash-app:1.0', '[fatal] Process exited with code 1', '[error] Back-off restarting failed container'] },
+            spec: { image, failureMode: 'CrashLoopBackOff' as const, logs: ['[error] Fatal: known bug in v1.0 — upgrade to app:2.0 to fix', 'Process exited with code 1'] },
             status: { phase: 'CrashLoopBackOff' as const, reason: 'CrashLoopBackOff', message: 'Back-off restarting failed container', restartCount: 3 },
           }],
           nodes: [{

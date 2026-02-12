@@ -401,5 +401,10 @@ export const lessonHelm: Lesson = {
         return !hasDeployedRelease && !hasDeployment;
       },
     },
+    // NOTE: An "Upgrade and Rollback a Helm Release" exercise would align well with
+    // quiz Q2 (values persistence) and Q3 (revision history), but the simulator's
+    // command parser only supports helm install, list, and uninstall. Adding this
+    // exercise requires implementing helm upgrade and helm rollback in parser.ts
+    // and executor.ts first.
   ],
 };

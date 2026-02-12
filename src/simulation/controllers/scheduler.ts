@@ -42,7 +42,8 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
       nodeAllocations.set(n.metadata.name, count);
     }
 
-    // Filter out nodes with taints the pod doesn't tolerate
+    // Filter out nodes with NoSchedule/NoExecute taints the pod doesn't tolerate
+    // PreferNoSchedule is handled in the scoring phase, not the filtering phase
     const toleratedNodes = readyNodes.filter((n) => {
       const taints = n.spec.taints || [];
       for (const taint of taints) {
@@ -59,7 +60,7 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
       return true;
     });
 
-    // Find a node with capacity (least loaded first)
+    // Find a node with capacity (least loaded first, penalize unmatched PreferNoSchedule taints)
     const availableNode = toleratedNodes
       .filter((n) => {
         const allocated = nodeAllocations.get(n.metadata.name) || 0;
@@ -68,6 +69,28 @@ export function runScheduler(cluster: ClusterState): SchedulerResult {
       .sort((a, b) => {
         const aAlloc = nodeAllocations.get(a.metadata.name) || 0;
         const bAlloc = nodeAllocations.get(b.metadata.name) || 0;
+
+        // Count unmatched PreferNoSchedule taints as a penalty
+        const tolerations = pod.spec.tolerations || [];
+        const aPenalty = (a.spec.taints || []).filter((taint) => {
+          if (taint.effect !== 'PreferNoSchedule') return false;
+          return !tolerations.some((t) => {
+            if (t.operator === 'Exists' && t.key === taint.key) return true;
+            if (t.key === taint.key && t.value === taint.value && (!t.effect || t.effect === taint.effect)) return true;
+            return false;
+          });
+        }).length;
+        const bPenalty = (b.spec.taints || []).filter((taint) => {
+          if (taint.effect !== 'PreferNoSchedule') return false;
+          return !tolerations.some((t) => {
+            if (t.operator === 'Exists' && t.key === taint.key) return true;
+            if (t.key === taint.key && t.value === taint.value && (!t.effect || t.effect === taint.effect)) return true;
+            return false;
+          });
+        }).length;
+
+        // Sort by penalty first, then by allocation (least loaded)
+        if (aPenalty !== bPenalty) return aPenalty - bPenalty;
         return aAlloc - bAlloc;
       })[0];
 

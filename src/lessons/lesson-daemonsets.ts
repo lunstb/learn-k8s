@@ -43,8 +43,9 @@ export const lessonDaemonSets: Lesson = {
           'Unlike Deployments, there is no replica count. The "desired count" is always equal to the number of ' +
           'eligible nodes. If you have 5 nodes, you get 5 pods. Add a 6th node and a pod automatically appears on it. ' +
           'Remove a node and its pod is cleaned up.\n\n' +
-          'The DaemonSet controller bypasses the normal scheduler — it directly sets spec.nodeName on each pod ' +
-          'to assign it to a specific node. This ensures one-to-one mapping between nodes and pods.',
+          'Since Kubernetes 1.12, DaemonSet pods are scheduled by the default scheduler using node affinity rules ' +
+          'that the DaemonSet controller automatically adds. This ensures one-to-one mapping between nodes and pods ' +
+          'while allowing DaemonSet pods to benefit from scheduler features like priority and preemption.',
         diagram:
           '  DaemonSet: log-collector\n' +
           '  ─────────────────────────\n' +
@@ -147,7 +148,7 @@ export const lessonDaemonSets: Lesson = {
       correctIndex: 1,
       explanation:
         'DaemonSets do not have a replica count — they run on every eligible node. To limit which nodes are eligible, use node affinity. The simplest approach is spec.template.spec.nodeSelector: {hardware: gpu}. ' +
-        'This ensures pods are only created on nodes with the hardware=gpu label. While option D (tainting non-GPU nodes) could technically work, it is the wrong approach — taints should reflect node constraints, not be used as a workaround for targeting. ' +
+        'This ensures pods are only created on nodes with the hardware=gpu label. Tainting non-GPU nodes could technically work, but taints should reflect node constraints, not be used as a workaround for targeting. ' +
         'Node affinity is the correct, explicit way to say "run only on these specific nodes."',
     },
   ],
@@ -260,6 +261,158 @@ spec:
         // One running pod per ready node
         const coveredNodes = new Set(runningDsPods.map((p) => p.spec.nodeName));
         return readyNodes.every((n) => coveredNodes.has(n.metadata.name));
+      },
+    },
+    {
+      title: 'DaemonSet on Tainted Nodes',
+      goalDescription:
+        'A DaemonSet "monitor" runs on node-1 and node-2, but not on node-3 (which has a gpu=true:NoSchedule taint). ' +
+        'Update the DaemonSet YAML to add a toleration so it runs on all 3 nodes.',
+      successMessage:
+        'The DaemonSet now tolerates the GPU taint and runs on all nodes including tainted ones. ' +
+        'In production, system DaemonSets (logging, monitoring, networking) typically need tolerations for ' +
+        'control-plane and special-purpose node taints.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: monitor
+spec:
+  selector:
+    matchLabels:
+      app: monitor
+  template:
+    metadata:
+      labels:
+        app: monitor
+    spec:
+      containers:
+      - name: monitor
+        image: prometheus-exporter:1.0
+      tolerations:
+      - key: ???
+        value: ???
+        effect: ???`,
+      hints: [
+        { text: 'Run kubectl get pods — notice only 2 monitor pods. Node-3 is missing one.' },
+        { text: 'Run kubectl describe node node-3 to see its taint: gpu=true:NoSchedule' },
+        { text: 'Add a toleration: key: gpu, value: "true", effect: NoSchedule', exact: false },
+        { text: 'Apply the updated YAML and reconcile to let the DaemonSet controller create the pod on node-3.' },
+      ],
+      goals: [
+        {
+          description: 'Use "kubectl get pods" to see only 2 monitor pods',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
+        },
+        {
+          description: 'Use "kubectl describe node node-3" to see the taint',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-node'),
+        },
+        {
+          description: 'Apply updated DaemonSet YAML with toleration',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'Monitor pod running on all 3 nodes including node-3',
+          check: (s: ClusterState) => {
+            const allNodeNames = ['node-1', 'node-2', 'node-3'];
+            const runningMonitorPods = s.pods.filter(
+              p => p.metadata.labels['app'] === 'monitor' &&
+                   p.status.phase === 'Running' &&
+                   !p.metadata.deletionTimestamp
+            );
+            const coveredNodes = new Set(runningMonitorPods.map(p => p.spec.nodeName));
+            return allNodeNames.every(n => coveredNodes.has(n));
+          },
+        },
+      ],
+      initialState: () => {
+        const dsUid = generateUID();
+        const nodeNames = ['node-1', 'node-2', 'node-3'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
+          },
+          spec: {
+            capacity: { pods: 4 },
+            // node-3 has a gpu=true:NoSchedule taint
+            ...(name === 'node-3' ? { taints: [{ key: 'gpu', value: 'true', effect: 'NoSchedule' as const }] } : {}),
+          },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: name === 'node-3' ? 0 : 1,
+          },
+        }));
+
+        // DaemonSet "monitor" with NO tolerations
+        const ds = {
+          kind: 'DaemonSet' as const,
+          metadata: {
+            name: 'monitor',
+            uid: dsUid,
+            labels: { app: 'monitor' },
+            creationTimestamp: Date.now() - 120000,
+          },
+          spec: {
+            selector: { app: 'monitor' },
+            template: {
+              labels: { app: 'monitor' },
+              spec: { image: 'prometheus-exporter:1.0' },
+            },
+          },
+          status: { desiredNumberScheduled: 3, currentNumberScheduled: 2, numberReady: 2 },
+        };
+
+        // 2 Running pods on node-1 and node-2 (not node-3 due to taint)
+        const pods = ['node-1', 'node-2'].map((nodeName) => ({
+          kind: 'Pod' as const,
+          metadata: {
+            name: `monitor-${nodeName}`,
+            uid: generateUID(),
+            labels: { app: 'monitor' },
+            ownerReference: {
+              kind: 'DaemonSet',
+              name: 'monitor',
+              uid: dsUid,
+            },
+            creationTimestamp: Date.now() - 60000,
+          },
+          spec: { image: 'prometheus-exporter:1.0', nodeName },
+          status: { phase: 'Running' as const },
+        }));
+
+        return {
+          pods,
+          replicaSets: [],
+          deployments: [],
+          nodes,
+          services: [],
+          events: [],
+          namespaces: [],
+          configMaps: [],
+          secrets: [],
+          ingresses: [],
+          statefulSets: [],
+          daemonSets: [ds],
+          jobs: [],
+          cronJobs: [],
+          hpas: [],
+          helmReleases: [],
+        };
+      },
+      goalCheck: (state: ClusterState) => {
+        const allNodeNames = ['node-1', 'node-2', 'node-3'];
+        const runningMonitorPods = state.pods.filter(
+          (p) =>
+            p.metadata.labels['app'] === 'monitor' &&
+            p.status.phase === 'Running' &&
+            !p.metadata.deletionTimestamp
+        );
+        const coveredNodes = new Set(runningMonitorPods.map((p) => p.spec.nodeName));
+        return allNodeNames.every((n) => coveredNodes.has(n));
       },
     },
   ],

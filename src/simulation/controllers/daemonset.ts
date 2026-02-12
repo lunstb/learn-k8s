@@ -33,9 +33,21 @@ export function reconcileDaemonSets(state: ClusterState): ReconcileResult {
       ownedPods.map((p) => p.spec.nodeName).filter(Boolean)
     );
 
-    // Create pods for nodes that don't have one yet
+    // Create pods for nodes that don't have one yet (respecting taints)
     for (const node of readyNodes) {
       if (!coveredNodeNames.has(node.metadata.name)) {
+        // Check if the node has taints that the DaemonSet template doesn't tolerate
+        const taints = node.spec.taints || [];
+        const tolerations = ds.spec.template.spec.tolerations || [];
+        const hasForbiddenTaint = taints.some((taint) => {
+          if (taint.effect !== 'NoSchedule' && taint.effect !== 'NoExecute') return false;
+          return !tolerations.some((t) => {
+            if (t.operator === 'Exists' && t.key === taint.key) return true;
+            if (t.key === taint.key && t.value === taint.value && (!t.effect || t.effect === taint.effect)) return true;
+            return false;
+          });
+        });
+        if (hasForbiddenTaint) continue;
         const podName = `${ds.metadata.name}-${node.metadata.name}`;
         const newPod: Pod = {
           kind: 'Pod',
@@ -106,8 +118,22 @@ export function reconcileDaemonSets(state: ClusterState): ReconcileResult {
     const readyPods = nonTerminatingPods.filter(
       (p) => p.status.phase === 'Running'
     );
+    // Count only nodes this DS can actually schedule onto (respecting taints)
+    const tolerations = ds.spec.template.spec.tolerations || [];
+    const eligibleNodeCount = readyNodes.filter((node) => {
+      const taints = node.spec.taints || [];
+      return !taints.some((taint) => {
+        if (taint.effect !== 'NoSchedule' && taint.effect !== 'NoExecute') return false;
+        return !tolerations.some((t) => {
+          if (t.operator === 'Exists' && t.key === taint.key) return true;
+          if (t.key === taint.key && t.value === taint.value && (!t.effect || t.effect === taint.effect)) return true;
+          return false;
+        });
+      });
+    }).length;
+
     ds.status = {
-      desiredNumberScheduled: readyNodes.length,
+      desiredNumberScheduled: eligibleNodeCount,
       currentNumberScheduled: nonTerminatingPods.length,
       numberReady: readyPods.length,
     };

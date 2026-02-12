@@ -353,7 +353,7 @@ export function reconcileDeployments(state: ClusterState): ReconcileResult {
         !p.metadata.deletionTimestamp
     );
 
-    const readyCount = allOwnedPods.filter((p) => p.status.phase === 'Running').length;
+    const readyCount = allOwnedPods.filter((p) => p.status.phase === 'Running' && p.status.ready !== false).length;
     const isComplete = updatedPods.length === desiredReplicas && oldPodCount === 0 && readyCount === desiredReplicas;
 
     dep.status = {

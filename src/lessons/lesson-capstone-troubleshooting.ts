@@ -98,7 +98,7 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       ],
       correctIndex: 1,
       explanation:
-        'Endpoints are populated by matching the Service\'s selector against pod labels. If there is any mismatch -- even a small one like a hyphen ("back-end" vs "backend") -- the Service finds zero matching pods, resulting in 0 endpoints despite pods being Running. Option A is plausible (only Ready pods become endpoints), but the scenario says pods are Running, and by default pods without readiness probes are considered Ready. Port mismatches do not affect endpoint registration -- they cause connection failures, not missing endpoints.',
+        'Endpoints are populated by matching the Service\'s selector against pod labels. If there is any mismatch -- even a small one like a hyphen ("back-end" vs "backend") -- the Service finds zero matching pods, resulting in 0 endpoints despite pods being Running. Readiness probe failures are plausible (only Ready pods become endpoints), but the scenario says pods are Running, and by default pods without readiness probes are considered Ready. Port mismatches do not affect endpoint registration -- they cause connection failures, not missing endpoints.',
     },
     {
       question:
@@ -124,7 +124,7 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       ],
       correctIndex: 2,
       explanation:
-        'A deployment creating multiple replicas can have pods fail at different stages. Some pods might land on nodes that are full (FailedScheduling), while others get scheduled successfully but fail to pull the image (ImagePullError). These are independent failures requiring separate fixes: the image name needs correcting AND scheduling capacity needs attention. This illustrates why systematic debugging matters -- a single deployment can exhibit multiple failure modes simultaneously. Option D is a good debugging practice but does not explain what the events mean.',
+        'A deployment creating multiple replicas can have pods fail at different stages. Some pods might land on nodes that are full (FailedScheduling), while others get scheduled successfully but fail to pull the image (ImagePullError). These are independent failures requiring separate fixes: the image name needs correcting AND scheduling capacity needs attention. This illustrates why systematic debugging matters -- a single deployment can exhibit multiple failure modes simultaneously. Prioritizing FailedScheduling over ImagePullError is a reasonable triage approach but does not explain what the events mean.',
     },
     {
       question:
@@ -137,7 +137,7 @@ export const lessonCapstoneTroubleshooting: Lesson = {
       ],
       correctIndex: 0,
       explanation:
-        'Deleting pods usually does not fix crashes because new pods use the same image and config. However, there are edge cases where it helps: corrupted container-local storage, stale DNS cache, a transient dependency that is now available, or a race condition that does not reproduce on fresh start. Option C is the common wisdom and is correct most of the time, but understanding the exceptions makes you a better debugger. The key principle: diagnose before acting. If "kubectl logs" shows a consistent error, deleting pods will not help. If logs show intermittent issues, a restart might.',
+        'Deleting pods usually does not fix crashes because new pods use the same image and config. However, there are edge cases where it helps: corrupted container-local storage, stale DNS cache, a transient dependency that is now available, or a race condition that does not reproduce on fresh start. The "it never works" answer is the common wisdom and is correct most of the time, but understanding the exceptions makes you a better debugger. The key principle: diagnose before acting. If "kubectl logs" shows a consistent error, deleting pods will not help. If logs show intermittent issues, a restart might.',
     },
   ],
   practices: [
@@ -368,7 +368,7 @@ export const lessonCapstoneTroubleshooting: Lesson = {
             ownerReference: { kind: 'ReplicaSet', name: `payment-api-${paymentHash.slice(0, 10)}`, uid: paymentRsUid },
             creationTimestamp: Date.now() - 30000,
           },
-          spec: { image: paymentImage, failureMode: 'CrashLoopBackOff' as const, logs: ['[startup] Container started with image payment:1.0', '[fatal] Process exited with code 1', '[error] Back-off restarting failed container'] },
+          spec: { image: paymentImage, failureMode: 'CrashLoopBackOff' as const, logs: ['[fatal] Null pointer in payment handler — fixed in payment:2.0', 'Process exited with code 1'] },
           status: { phase: 'CrashLoopBackOff' as const, reason: 'CrashLoopBackOff', message: 'Back-off restarting failed container', restartCount: 5 },
         }));
 
@@ -380,7 +380,7 @@ export const lessonCapstoneTroubleshooting: Lesson = {
             ownerReference: { kind: 'ReplicaSet', name: `cache-server-${cacheHash.slice(0, 10)}`, uid: cacheRsUid },
             creationTimestamp: Date.now() - 30000,
           },
-          spec: { image: cacheImage, failureMode: 'OOMKilled' as const, logs: ['[startup] Container started with image redis-oom:1.0', '[fatal] Container killed: OOMKilled — memory limit exceeded'] },
+          spec: { image: cacheImage, failureMode: 'OOMKilled' as const, logs: ['[error] redis-oom:1.0 has known memory leak — use redis:7.0 instead', 'Out of memory'] },
           status: { phase: 'Failed' as const, reason: 'OOMKilled', message: 'Container exceeded memory limit', restartCount: 3 },
         }));
 

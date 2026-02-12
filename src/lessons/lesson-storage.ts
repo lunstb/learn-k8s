@@ -136,7 +136,7 @@ export const lessonStorage: Lesson = {
         'Dynamic provisioning can fail for several reasons even when the StorageClass exists: cloud provider quotas or API errors, ' +
         'unsupported access modes (e.g., requesting RWX from an EBS provisioner that only supports RWO), invalid parameters in the StorageClass, ' +
         'or the provisioner pod itself is unhealthy. Check `kubectl describe pvc` for events from the provisioner. ' +
-        'Option C is partially true — WaitForFirstConsumer delays provisioning until a pod references the PVC — ' +
+        'The WaitForFirstConsumer binding mode is a real feature — it delays provisioning until a pod references the PVC — ' +
         'but the default Immediate mode provisions right away, so this is not the most common cause.',
     },
     {

@@ -9,7 +9,7 @@ export const lessonScheduling: Lesson = {
     'Pods run on nodes. The scheduler assigns Pending pods to nodes with capacity, and you control placement with cordon and uncordon.',
   mode: 'full',
   goalDescription:
-    'Drain node-3 to evict its pods, watch them reschedule on healthy nodes, then uncordon node-3 to restore the cluster. End state: 6 Running pods across 3 schedulable nodes.',
+    'Drain node-3 to evict its pods, watch them reschedule on healthy nodes, then uncordon node-3 to restore the cluster. End state: 6 Running pods with all 3 nodes schedulable.',
   successMessage:
     'You\'ve mastered scheduling: cordon prevents placement, drain evicts pods, the RS recreates them, ' +
     'and the scheduler places them on healthy nodes.',
@@ -204,7 +204,7 @@ export const lessonScheduling: Lesson = {
     {
       title: 'Drain and Restore a Node',
       goalDescription:
-        'Drain node-3 to evict its pods, watch them reschedule on healthy nodes, then uncordon node-3 to restore the cluster. End state: 6 Running pods across 3 schedulable nodes.',
+        'Drain node-3 to evict its pods, watch them reschedule on healthy nodes, then uncordon node-3 to restore the cluster. End state: 6 Running pods with all 3 nodes schedulable.',
       successMessage:
         'You\'ve mastered scheduling: cordon prevents placement, drain evicts pods, the RS recreates them, and the scheduler places them on healthy nodes.',
       initialState: () => {
@@ -287,7 +287,7 @@ export const lessonScheduling: Lesson = {
           },
         },
         {
-          description: 'All 6 pods Running across 3 schedulable nodes',
+          description: '6 Running pods with all 3 nodes schedulable',
           check: (s: ClusterState) => {
             const running = s.pods.filter(p => p.status.phase === 'Running' && !p.metadata.deletionTimestamp);
             const schedulable = s.nodes.filter(n => !n.spec.unschedulable && n.status.conditions[0].status === 'True');

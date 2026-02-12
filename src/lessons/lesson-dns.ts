@@ -152,19 +152,20 @@ export const lessonDNS: Lesson = {
     },
     {
       question:
-        'You run `kubectl get endpoints api-svc` and see `<none>`. The Service "api-svc" exists with selector `app=api`. What should you check first?',
+        'A pod in namespace "orders" runs `curl redis`. The request fails. The same pod runs `curl redis.cache.svc.cluster.local` and it succeeds. What is the most likely cause?',
       choices: [
-        'CoreDNS logs — the DNS server might have failed to register the endpoint records for this Service',
-        'The kube-proxy configuration — kube-proxy is responsible for populating the Endpoints object for each Service',
-        'Whether any Running pods have the label `app=api` — a selector mismatch or missing pods means no endpoints are registered',
-        'Whether the Service port matches the container port — port mismatches prevent the Endpoints controller from adding pods',
+        'CoreDNS is caching a stale record for "redis" and needs to be restarted to pick up the correct IP',
+        'The Redis Service is in the "cache" namespace, not "orders" — the short name `redis` only resolves within the pod\'s own namespace',
+        'CoreDNS is partially down and can only resolve FQDNs, not short names that rely on search domain expansion',
+        'The Redis Service is using a non-standard port, and the short name `redis` defaults to port 80 while the FQDN uses the correct port',
       ],
-      correctIndex: 2,
+      correctIndex: 1,
       explanation:
-        'Empty endpoints mean the Endpoints controller found no Running pods matching the Service selector. ' +
-        'Check: `kubectl get pods -l app=api` — if no pods are returned, the label does not match. ' +
-        'Common causes: typo in selector, pods use "app: api-server" instead of "app: api", or no pods are Running. ' +
-        'Port mismatches do not affect endpoint registration — they cause connection failures, not empty endpoints.',
+        'When a pod uses a bare service name like "redis", the DNS resolver appends the search domains from /etc/resolv.conf. ' +
+        'For a pod in the "orders" namespace, the first search domain is orders.svc.cluster.local, so "redis" resolves to redis.orders.svc.cluster.local — ' +
+        'which does not exist because the Redis Service is in the "cache" namespace. The FQDN redis.cache.svc.cluster.local works because it bypasses search domain expansion entirely. ' +
+        'The fix is to use the cross-namespace short form: `curl redis.cache`. This is one of the most common DNS debugging scenarios in Kubernetes — ' +
+        'services in different namespaces require at least `<service>.<namespace>` to resolve correctly.',
     },
   ],
 };

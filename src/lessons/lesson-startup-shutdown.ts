@@ -160,8 +160,8 @@ export const lessonStartupShutdown: Lesson = {
       correctIndex: 2,
       explanation:
         'The startup probe gives 50 × 2 = 100 seconds for startup (safely above 90). Once the app is ready, ' +
-        'the startup probe passes and liveness begins checking every 10 seconds. Option A delays deadlock detection ' +
-        'by 120 seconds for every pod restart. Option C only controls traffic, not restart-on-hang. ' +
+        'the startup probe passes and liveness begins checking every 10 seconds. Setting initialDelaySeconds=120 on a liveness probe delays deadlock detection ' +
+        'by 120 seconds for every pod restart. Using only a readiness probe controls traffic routing, not restart-on-hang. ' +
         'The startup + liveness combination gives generous startup time with aggressive runtime health checking.',
     },
     {
@@ -432,53 +432,80 @@ spec:
       },
     },
     {
-      title: 'Configure a Graceful Shutdown',
+      title: 'Add Readiness Probes for Zero-Downtime Shutdown',
       goalDescription:
-        'The "api-server" deployment handles long-running requests. Apply a YAML update that adds terminationGracePeriodSeconds: 45 to ensure in-flight requests complete before shutdown.',
+        'A deployment "web" with 3 replicas is running behind a Service but has NO readiness probes. During rolling updates, traffic is sent to pods that are still starting up. Add a readiness probe to prevent this.',
       successMessage:
-        'In production, graceful shutdown prevents 502 errors during rolling updates. The preStop hook gives time for load balancers to drain connections, and terminationGracePeriodSeconds sets the hard deadline.',
+        'The deployment now has readiness probes. During rolling updates, new pods won\'t receive traffic until they pass the readiness check — preventing errors from half-started containers.',
       yamlTemplate: `apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api-server
+  name: web
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: api-server
+      app: web
   template:
     metadata:
       labels:
-        app: api-server
+        app: web
     spec:
-      terminationGracePeriodSeconds: ???
       containers:
-      - name: api-server
-        image: api:1.0`,
+      - name: web
+        image: web:1.0
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: ???
+          periodSeconds: ???`,
       hints: [
-        { text: 'Switch to the YAML Editor tab and fill in terminationGracePeriodSeconds: 45' },
-        { text: 'Click Apply (or Ctrl+Enter) to update the deployment.' },
+        { text: 'The deployment needs a readiness probe so Kubernetes knows when each pod is ready for traffic.' },
+        { text: 'Fill in the readinessProbe fields: initialDelaySeconds: 5, periodSeconds: 10', exact: false },
+        { text: 'Use the YAML Editor tab to apply the updated deployment with the readiness probe.' },
       ],
       goals: [
         {
-          description: 'Apply YAML to update the deployment',
+          description: 'Use "kubectl get pods" to see the current state',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
+        },
+        {
+          description: 'Apply a Deployment YAML with a readiness probe',
           check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
         },
         {
-          description: 'All "api-server" pods Running',
+          description: 'Deployment has a readiness probe configured',
           check: (s: ClusterState) => {
-            const dep = s.deployments.find(d => d.metadata.name === 'api-server');
-            return !!dep && (dep.status.readyReplicas || 0) >= 3;
+            const dep = s.deployments.find(d => d.metadata.name === 'web');
+            return !!dep && !!dep.spec.template.spec.readinessProbe;
+          },
+        },
+        {
+          description: 'All pods Running and Ready',
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'web');
+            if (!dep) return false;
+            const activePods = s.pods.filter(p =>
+              !p.metadata.deletionTimestamp &&
+              p.status.phase === 'Running' &&
+              p.status.ready !== false &&
+              s.replicaSets.some(rs =>
+                rs.metadata.ownerReference?.uid === dep.metadata.uid &&
+                rs.metadata.uid === p.metadata.ownerReference?.uid
+              )
+            );
+            return activePods.length >= 3;
           },
         },
       ],
       initialState: () => {
         const depUid = generateUID();
         const rsUid = generateUID();
-        const image = 'api:1.0';
+        const image = 'web:1.0';
         const hash = templateHash({ image });
 
-        const nodeNames = ['node-1', 'node-2'];
+        const nodeNames = ['node-1', 'node-2', 'node-3'];
         const nodes = nodeNames.map((name) => ({
           kind: 'Node' as const,
           metadata: {
@@ -490,24 +517,24 @@ spec:
           spec: { capacity: { pods: 10 } },
           status: {
             conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-            allocatedPods: 2,
+            allocatedPods: 1,
           },
         }));
 
         const pods = Array.from({ length: 3 }, (_, i) => ({
           kind: 'Pod' as const,
           metadata: {
-            name: generatePodName(`api-server-${hash.slice(0, 10)}`),
+            name: generatePodName(`web-${hash.slice(0, 10)}`),
             uid: generateUID(),
-            labels: { app: 'api-server', 'pod-template-hash': hash },
+            labels: { app: 'web', 'pod-template-hash': hash },
             ownerReference: {
               kind: 'ReplicaSet',
-              name: `api-server-${hash.slice(0, 10)}`,
+              name: `web-${hash.slice(0, 10)}`,
               uid: rsUid,
             },
             creationTimestamp: Date.now() - 60000,
           },
-          spec: { image, nodeName: nodeNames[i % 2] },
+          spec: { image, nodeName: nodeNames[i] },
           status: { phase: 'Running' as const, ready: true, tickCreated: -5 },
         }));
 
@@ -517,21 +544,21 @@ spec:
             {
               kind: 'ReplicaSet' as const,
               metadata: {
-                name: `api-server-${hash.slice(0, 10)}`,
+                name: `web-${hash.slice(0, 10)}`,
                 uid: rsUid,
-                labels: { app: 'api-server', 'pod-template-hash': hash },
+                labels: { app: 'web', 'pod-template-hash': hash },
                 ownerReference: {
                   kind: 'Deployment',
-                  name: 'api-server',
+                  name: 'web',
                   uid: depUid,
                 },
                 creationTimestamp: Date.now() - 120000,
               },
               spec: {
                 replicas: 3,
-                selector: { app: 'api-server', 'pod-template-hash': hash },
+                selector: { app: 'web', 'pod-template-hash': hash },
                 template: {
-                  labels: { app: 'api-server', 'pod-template-hash': hash },
+                  labels: { app: 'web', 'pod-template-hash': hash },
                   spec: { image },
                 },
               },
@@ -542,16 +569,16 @@ spec:
             {
               kind: 'Deployment' as const,
               metadata: {
-                name: 'api-server',
+                name: 'web',
                 uid: depUid,
-                labels: { app: 'api-server' },
+                labels: { app: 'web' },
                 creationTimestamp: Date.now() - 120000,
               },
               spec: {
                 replicas: 3,
-                selector: { app: 'api-server' },
+                selector: { app: 'web' },
                 template: {
-                  labels: { app: 'api-server' },
+                  labels: { app: 'web' },
                   spec: { image },
                 },
                 strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
@@ -566,15 +593,37 @@ spec:
             },
           ],
           nodes,
-          services: [],
+          services: [
+            {
+              kind: 'Service' as const,
+              metadata: {
+                name: 'web-svc',
+                uid: generateUID(),
+                labels: { app: 'web' },
+                creationTimestamp: Date.now() - 120000,
+              },
+              spec: { selector: { app: 'web' }, port: 80 },
+              status: { endpoints: pods.map(p => p.metadata.name) },
+            },
+          ],
           events: [],
         };
       },
       goalCheck: (state: ClusterState) => {
         const applied = (state._commandsUsed ?? []).includes('apply');
-        const dep = state.deployments.find((d) => d.metadata.name === 'api-server');
-        const hasEnoughReplicas = !!dep && (dep.status.readyReplicas || 0) >= 3;
-        return applied && hasEnoughReplicas;
+        const gotPods = (state._commandsUsed ?? []).includes('get-pods');
+        const dep = state.deployments.find((d) => d.metadata.name === 'web');
+        const hasProbe = !!dep && !!dep.spec.template.spec.readinessProbe;
+        const activePods = dep ? state.pods.filter(p =>
+          !p.metadata.deletionTimestamp &&
+          p.status.phase === 'Running' &&
+          p.status.ready !== false &&
+          state.replicaSets.some(rs =>
+            rs.metadata.ownerReference?.uid === dep.metadata.uid &&
+            rs.metadata.uid === p.metadata.ownerReference?.uid
+          )
+        ) : [];
+        return applied && gotPods && hasProbe && activePods.length >= 3;
       },
     },
   ],

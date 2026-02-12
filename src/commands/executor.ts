@@ -171,12 +171,14 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (isNaN(replicas) || replicas < 0) {
       return ['Error: --replicas must be a non-negative number'];
     }
+    const ns = cmd.flags.namespace || cmd.flags.n;
     const dep: Deployment = {
       kind: 'Deployment',
       metadata: {
         name: cmd.resourceName,
         uid: generateUID(),
         labels: { app: cmd.resourceName },
+        namespace: ns || undefined,
         creationTimestamp: Date.now(),
       },
       spec: {
@@ -340,8 +342,17 @@ function handleCreate(cmd: ParsedCommand): string[] {
       return [`Error: configmap "${cmd.resourceName}" already exists`];
     }
     const data: Record<string, string> = {};
-    const fromLiteral = cmd.flags['from-literal'];
-    if (fromLiteral) {
+    // Support multiple --from-literal flags
+    if (cmd.flags['_from-literals']) {
+      const literals: string[] = JSON.parse(cmd.flags['_from-literals']);
+      for (const lit of literals) {
+        const eqIdx = lit.indexOf('=');
+        if (eqIdx > 0) {
+          data[lit.substring(0, eqIdx)] = lit.substring(eqIdx + 1);
+        }
+      }
+    } else if (cmd.flags['from-literal']) {
+      const fromLiteral = cmd.flags['from-literal'];
       const eqIdx = fromLiteral.indexOf('=');
       if (eqIdx > 0) {
         data[fromLiteral.substring(0, eqIdx)] = fromLiteral.substring(eqIdx + 1);
@@ -380,15 +391,39 @@ function handleCreate(cmd: ParsedCommand): string[] {
     if (!dryRun && store.cluster.secrets.find((s) => s.metadata.name === cmd.resourceName)) {
       return [`Error: secret "${cmd.resourceName}" already exists`];
     }
+    const subtype = cmd.flags['_secretSubtype'] || 'generic';
     const data: Record<string, string> = {};
-    const fromLiteral = cmd.flags['from-literal'];
-    if (fromLiteral) {
-      const eqIdx = fromLiteral.indexOf('=');
-      if (eqIdx > 0) {
-        data[fromLiteral.substring(0, eqIdx)] = btoa(fromLiteral.substring(eqIdx + 1));
+    let secretType = 'Opaque';
+
+    if (subtype === 'docker-registry') {
+      secretType = 'kubernetes.io/dockerconfigjson';
+      const server = cmd.flags['docker-server'] || 'https://index.docker.io/v1/';
+      const username = cmd.flags['docker-username'] || '';
+      const password = cmd.flags['docker-password'] || '';
+      const email = cmd.flags['docker-email'] || '';
+      const authStr = btoa(`${username}:${password}`);
+      const dockerConfig = { auths: { [server]: { username, password, email, auth: authStr } } };
+      data['.dockerconfigjson'] = btoa(JSON.stringify(dockerConfig));
+    } else {
+      // generic or tls: handle --from-literal flags
+      if (cmd.flags['_from-literals']) {
+        const literals: string[] = JSON.parse(cmd.flags['_from-literals']);
+        for (const lit of literals) {
+          const eqIdx = lit.indexOf('=');
+          if (eqIdx > 0) {
+            data[lit.substring(0, eqIdx)] = btoa(lit.substring(eqIdx + 1));
+          }
+        }
+      } else if (cmd.flags['from-literal']) {
+        const fromLiteral = cmd.flags['from-literal'];
+        const eqIdx = fromLiteral.indexOf('=');
+        if (eqIdx > 0) {
+          data[fromLiteral.substring(0, eqIdx)] = btoa(fromLiteral.substring(eqIdx + 1));
+        }
       }
     }
-    const yamlOut = dryRunYamlOutput({ apiVersion: 'v1', kind: 'Secret', metadata: { name: cmd.resourceName }, type: 'Opaque', data }, cmd);
+
+    const yamlOut = dryRunYamlOutput({ apiVersion: 'v1', kind: 'Secret', metadata: { name: cmd.resourceName }, type: secretType, data }, cmd);
     if (yamlOut) return yamlOut;
     if (dryRun) return [`secret/${cmd.resourceName} created (dry run)`];
     const secret: Secret = {
@@ -399,7 +434,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
         labels: {},
         creationTimestamp: Date.now(),
       },
-      type: 'Opaque',
+      type: secretType,
       data,
     };
     store.addSecret(secret);
@@ -410,7 +445,7 @@ function handleCreate(cmd: ParsedCommand): string[] {
       reason: 'Created',
       objectKind: 'Secret',
       objectName: cmd.resourceName,
-      message: `Created secret "${cmd.resourceName}"`,
+      message: `Created secret "${cmd.resourceName}" (type: ${secretType})`,
     });
     return [`secret/${cmd.resourceName} created`];
   }
@@ -2146,12 +2181,14 @@ function applyDeployment(doc: Record<string, unknown>, name: string): string[] {
     return [`deployment.apps/${name} configured`];
   }
 
+  const ns = metadata.namespace ? String(metadata.namespace) : undefined;
   const dep: Deployment = {
     kind: 'Deployment',
     metadata: {
       name,
       uid: generateUID(),
       labels: Object.keys(labels).length > 0 ? labels : { app: name },
+      namespace: ns || undefined,
       creationTimestamp: Date.now(),
     },
     spec: {
@@ -2373,17 +2410,32 @@ function applyStatefulSet(doc: Record<string, unknown>, name: string): string[] 
 function applyDaemonSet(doc: Record<string, unknown>, name: string): string[] {
   const store = useSimulatorStore.getState();
   const existing = store.cluster.daemonSets.find((d) => d.metadata.name === name);
-  if (existing) return [`daemonset.apps/${name} configured (unchanged)`];
   const spec = doc.spec as Record<string, unknown> || {};
   const template = spec.template as Record<string, unknown> || {};
+  const templateMeta = template.metadata as Record<string, unknown> || {};
   const templateSpec = template.spec as Record<string, unknown> || {};
   const podSpec = extractPodSpec(templateSpec);
+  const templateLabels = extractLabels(templateMeta);
+
+  if (existing) {
+    store.updateDaemonSet(existing.metadata.uid, {
+      spec: {
+        ...existing.spec,
+        template: {
+          labels: Object.keys(templateLabels).length > 0 ? templateLabels : existing.spec.template.labels,
+          spec: { ...existing.spec.template.spec, ...podSpec },
+        },
+      },
+    });
+    return [`daemonset.apps/${name} configured`];
+  }
+
   const ds: DaemonSet = {
     kind: 'DaemonSet',
     metadata: { name, uid: generateUID(), labels: { app: name }, creationTimestamp: Date.now() },
     spec: {
       selector: { app: name },
-      template: { labels: { app: name }, spec: podSpec },
+      template: { labels: Object.keys(templateLabels).length > 0 ? templateLabels : { app: name }, spec: podSpec },
     },
     status: { desiredNumberScheduled: 0, currentNumberScheduled: 0, numberReady: 0 },
   };
@@ -2553,6 +2605,17 @@ function handleLabel(cmd: ParsedCommand): string[] {
 
   // Update the resource labels directly
   resource.metadata.labels = newLabels;
+
+  // Trigger proper Zustand state update by creating new array references
+  if (cmd.resourceType === 'pod') {
+    useSimulatorStore.setState({ cluster: { ...store.cluster, pods: [...store.cluster.pods] } });
+  } else if (cmd.resourceType === 'deployment') {
+    useSimulatorStore.setState({ cluster: { ...store.cluster, deployments: [...store.cluster.deployments] } });
+  } else if (cmd.resourceType === 'node') {
+    useSimulatorStore.setState({ cluster: { ...store.cluster, nodes: [...store.cluster.nodes] } });
+  } else if (cmd.resourceType === 'service') {
+    useSimulatorStore.setState({ cluster: { ...store.cluster, services: [...store.cluster.services] } });
+  }
 
   return [`${kindName}/${cmd.resourceName} labeled`];
 }
@@ -2743,6 +2806,8 @@ function handlePatch(cmd: ParsedCommand): string[] {
     if (!patched) {
       return ['Error: Nothing to patch. Use --selector=key=value or --port=N'];
     }
+    // Trigger proper Zustand state update
+    useSimulatorStore.setState({ cluster: { ...store.cluster, services: [...store.cluster.services] } });
     return [`service/${cmd.resourceName} patched`];
   }
 
@@ -2758,6 +2823,8 @@ function handlePatch(cmd: ParsedCommand): string[] {
     if (!patched) {
       return ['Error: Nothing to patch. Use --image=<image>'];
     }
+    // Trigger proper Zustand state update
+    useSimulatorStore.setState({ cluster: { ...store.cluster, deployments: [...store.cluster.deployments] } });
     return [`deployment.apps/${cmd.resourceName} patched`];
   }
 

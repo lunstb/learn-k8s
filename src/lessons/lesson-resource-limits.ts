@@ -156,7 +156,7 @@ export const lessonResourceLimits: Lesson = {
       ],
       correctIndex: 2,
       explanation:
-        'The scheduler uses resource requests (not actual usage or limits) to decide if a pod fits on a node. Each node has 4Gi total but 3Gi already committed to existing pod requests, leaving only 1Gi of allocatable capacity. Since the new pod requests 2Gi, no node can satisfy it, and the pod stays Pending with a FailedScheduling event. This is true even if the existing pods are not actually using their full requested amounts. Kubernetes does NOT preempt regular pods for other regular pods (Option D) -- priority-based preemption requires explicit PriorityClasses. Understanding that scheduling is based on requests, not actual usage, is fundamental to capacity planning.',
+        'The scheduler uses resource requests (not actual usage or limits) to decide if a pod fits on a node. Each node has 4Gi total but 3Gi already committed to existing pod requests, leaving only 1Gi of allocatable capacity. Since the new pod requests 2Gi, no node can satisfy it, and the pod stays Pending with a FailedScheduling event. This is true even if the existing pods are not actually using their full requested amounts. Kubernetes does NOT preempt regular pods for other regular pods -- priority-based preemption requires explicit PriorityClasses, so the pod would not be placed on the least-loaded node and OOMKilled. Understanding that scheduling is based on requests, not actual usage, is fundamental to capacity planning.',
     },
     {
       question:
@@ -169,7 +169,7 @@ export const lessonResourceLimits: Lesson = {
       ],
       correctIndex: 1,
       explanation:
-        'A pod is Guaranteed ONLY when every container has requests equal to limits for both CPU and memory. Here, requests differ from limits (250m vs 1000m CPU, 128Mi vs 512Mi memory), so the pod is Burstable. This means it gets its requested resources guaranteed but can burst higher when capacity is available. The tradeoff: Burstable pods are evicted before Guaranteed pods under node pressure. Option D is wrong -- Burstable and Guaranteed are NOT equivalent in eviction behavior, even if all resource types are specified. For critical production services, setting requests=limits provides stronger eviction protection at the cost of not being able to burst.',
+        'A pod is Guaranteed ONLY when every container has requests equal to limits for both CPU and memory. Here, requests differ from limits (250m vs 1000m CPU, 128Mi vs 512Mi memory), so the pod is Burstable. This means it gets its requested resources guaranteed but can burst higher when capacity is available. The tradeoff: Burstable pods are evicted before Guaranteed pods under node pressure. The claim that having all four resource fields set gives Burstable the same eviction protection as Guaranteed is wrong -- Burstable and Guaranteed are NOT equivalent in eviction behavior, even if all resource types are specified. For critical production services, setting requests=limits provides stronger eviction protection at the cost of not being able to burst.',
     },
     {
       question:
@@ -379,79 +379,92 @@ export const lessonResourceLimits: Lesson = {
     {
       title: 'Set Resource Requests and Limits',
       goalDescription:
-        'The "memory-hog" deployment has OOMKilled pods. Use describe to diagnose, then fix the image to "app:2.0". Observe that proper resource limits prevent runaway memory usage.',
+        'The "hungry-app" deployment has 2 replicas running with NO resource requests — the scheduler treats them as zero-resource pods. Add proper resource requests and limits via YAML to ensure correct scheduling and prevent runaway usage.',
       successMessage:
-        'Fixing OOMKilled often means either increasing memory limits or fixing the memory leak. In this case, the image itself was the problem. Always set resource requests and limits to protect your cluster from noisy neighbors.',
-      podFailureRules: {
-        'memory-hog:1.0': 'OOMKilled',
-      },
+        'Resources are set. Requests guarantee the pod gets scheduled with enough capacity. Limits prevent it from consuming more than allocated — exceeding the memory limit causes OOMKilled.',
+      yamlTemplate: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hungry-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hungry-app
+  template:
+    metadata:
+      labels:
+        app: hungry-app
+    spec:
+      containers:
+      - name: hungry-app
+        image: hungry-app:1.0
+        resources:
+          requests:
+            cpu: ???
+            memory: ???
+          limits:
+            cpu: ???
+            memory: ???`,
       hints: [
-        { text: 'Run "kubectl describe pod" on a memory-hog pod to see the OOMKilled status.' },
-        { text: 'The memory-hog image consumes too much memory. Fix it with set image.' },
-        { text: 'kubectl set image deployment/memory-hog app:2.0', exact: true },
+        { text: 'Use kubectl describe pod to see that the pods have no resource requests or limits set.' },
+        { text: 'Set reasonable resources: requests (cpu: 250m, memory: 128Mi) and limits (cpu: 500m, memory: 256Mi)', exact: false },
+        { text: 'Use the YAML Editor to apply the updated deployment with resources set.' },
       ],
       goals: [
         {
-          description: 'Use "kubectl describe pod" to diagnose the OOMKilled pod',
+          description: 'Use "kubectl describe pod" to observe current resource settings',
           check: (s: ClusterState) => (s._commandsUsed ?? []).includes('describe-pod'),
         },
         {
-          description: 'Fix the memory-hog deployment image',
+          description: 'Apply updated deployment with resource requests',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('apply'),
+        },
+        {
+          description: 'Deployment has resource requests configured',
           check: (s: ClusterState) => {
-            const dep = s.deployments.find(d => d.metadata.name === 'memory-hog');
-            return !!dep && dep.spec.template.spec.image !== 'memory-hog:1.0';
+            const dep = s.deployments.find(d => d.metadata.name === 'hungry-app');
+            return !!dep && !!dep.spec.template.spec.resources?.requests;
           },
         },
         {
           description: 'All pods Running',
-          check: (s: ClusterState) => s.deployments.every(d => (d.status.readyReplicas || 0) >= d.spec.replicas),
+          check: (s: ClusterState) => {
+            const dep = s.deployments.find(d => d.metadata.name === 'hungry-app');
+            if (!dep) return false;
+            const activePods = s.pods.filter(p =>
+              !p.metadata.deletionTimestamp &&
+              p.status.phase === 'Running' &&
+              s.replicaSets.some(rs =>
+                rs.metadata.ownerReference?.uid === dep.metadata.uid &&
+                rs.metadata.uid === p.metadata.ownerReference?.uid
+              )
+            );
+            return activePods.length >= dep.spec.replicas;
+          },
         },
       ],
       initialState: () => {
-        // api-server deployment (healthy)
-        const apiDepUid = generateUID();
-        const apiRsUid = generateUID();
-        const apiImage = 'api:1.0';
-        const apiHash = templateHash({ image: apiImage });
+        const depUid = generateUID();
+        const rsUid = generateUID();
+        const image = 'hungry-app:1.0';
+        const hash = templateHash({ image });
 
-        const apiPods = Array.from({ length: 2 }, () => ({
+        const pods = Array.from({ length: 2 }, () => ({
           kind: 'Pod' as const,
           metadata: {
-            name: generatePodName(`api-server-${apiHash.slice(0, 10)}`),
+            name: generatePodName(`hungry-app-${hash.slice(0, 10)}`),
             uid: generateUID(),
-            labels: { app: 'api-server', 'pod-template-hash': apiHash },
+            labels: { app: 'hungry-app', 'pod-template-hash': hash },
             ownerReference: {
               kind: 'ReplicaSet',
-              name: `api-server-${apiHash.slice(0, 10)}`,
-              uid: apiRsUid,
+              name: `hungry-app-${hash.slice(0, 10)}`,
+              uid: rsUid,
             },
             creationTimestamp: Date.now() - 60000,
           },
-          spec: { image: apiImage },
+          spec: { image },
           status: { phase: 'Running' as const },
-        }));
-
-        // memory-hog deployment (OOMKilled)
-        const hogDepUid = generateUID();
-        const hogRsUid = generateUID();
-        const hogImage = 'memory-hog:1.0';
-        const hogHash = templateHash({ image: hogImage });
-
-        const hogPods = Array.from({ length: 1 }, () => ({
-          kind: 'Pod' as const,
-          metadata: {
-            name: generatePodName(`memory-hog-${hogHash.slice(0, 10)}`),
-            uid: generateUID(),
-            labels: { app: 'memory-hog', 'pod-template-hash': hogHash },
-            ownerReference: {
-              kind: 'ReplicaSet',
-              name: `memory-hog-${hogHash.slice(0, 10)}`,
-              uid: hogRsUid,
-            },
-            creationTimestamp: Date.now() - 60000,
-          },
-          spec: { image: hogImage },
-          status: { phase: 'Pending' as const, reason: 'OOMKilled', message: 'Container exceeded memory limit' },
         }));
 
         return {
@@ -459,17 +472,17 @@ export const lessonResourceLimits: Lesson = {
             {
               kind: 'Deployment' as const,
               metadata: {
-                name: 'api-server',
-                uid: apiDepUid,
-                labels: { app: 'api-server' },
+                name: 'hungry-app',
+                uid: depUid,
+                labels: { app: 'hungry-app' },
                 creationTimestamp: Date.now() - 120000,
               },
               spec: {
                 replicas: 2,
-                selector: { app: 'api-server' },
+                selector: { app: 'hungry-app' },
                 template: {
-                  labels: { app: 'api-server' },
-                  spec: { image: apiImage },
+                  labels: { app: 'hungry-app' },
+                  spec: { image },
                 },
                 strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
               },
@@ -481,81 +494,33 @@ export const lessonResourceLimits: Lesson = {
                 conditions: [{ type: 'Available', status: 'True' }],
               },
             },
-            {
-              kind: 'Deployment' as const,
-              metadata: {
-                name: 'memory-hog',
-                uid: hogDepUid,
-                labels: { app: 'memory-hog' },
-                creationTimestamp: Date.now() - 120000,
-              },
-              spec: {
-                replicas: 1,
-                selector: { app: 'memory-hog' },
-                template: {
-                  labels: { app: 'memory-hog' },
-                  spec: { image: hogImage },
-                },
-                strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
-              },
-              status: {
-                replicas: 1,
-                updatedReplicas: 0,
-                readyReplicas: 0,
-                availableReplicas: 0,
-                conditions: [],
-              },
-            },
           ],
           replicaSets: [
             {
               kind: 'ReplicaSet' as const,
               metadata: {
-                name: `api-server-${apiHash.slice(0, 10)}`,
-                uid: apiRsUid,
-                labels: { app: 'api-server', 'pod-template-hash': apiHash },
+                name: `hungry-app-${hash.slice(0, 10)}`,
+                uid: rsUid,
+                labels: { app: 'hungry-app', 'pod-template-hash': hash },
                 ownerReference: {
                   kind: 'Deployment',
-                  name: 'api-server',
-                  uid: apiDepUid,
+                  name: 'hungry-app',
+                  uid: depUid,
                 },
                 creationTimestamp: Date.now() - 120000,
               },
               spec: {
                 replicas: 2,
-                selector: { app: 'api-server', 'pod-template-hash': apiHash },
+                selector: { app: 'hungry-app', 'pod-template-hash': hash },
                 template: {
-                  labels: { app: 'api-server', 'pod-template-hash': apiHash },
-                  spec: { image: apiImage },
+                  labels: { app: 'hungry-app', 'pod-template-hash': hash },
+                  spec: { image },
                 },
               },
               status: { replicas: 2, readyReplicas: 2 },
             },
-            {
-              kind: 'ReplicaSet' as const,
-              metadata: {
-                name: `memory-hog-${hogHash.slice(0, 10)}`,
-                uid: hogRsUid,
-                labels: { app: 'memory-hog', 'pod-template-hash': hogHash },
-                ownerReference: {
-                  kind: 'Deployment',
-                  name: 'memory-hog',
-                  uid: hogDepUid,
-                },
-                creationTimestamp: Date.now() - 120000,
-              },
-              spec: {
-                replicas: 1,
-                selector: { app: 'memory-hog', 'pod-template-hash': hogHash },
-                template: {
-                  labels: { app: 'memory-hog', 'pod-template-hash': hogHash },
-                  spec: { image: hogImage },
-                },
-              },
-              status: { replicas: 1, readyReplicas: 0 },
-            },
           ],
-          pods: [...apiPods, ...hogPods],
+          pods,
           nodes: [
             {
               kind: 'Node' as const,
@@ -568,7 +533,7 @@ export const lessonResourceLimits: Lesson = {
               spec: { capacity: { pods: 5 } },
               status: {
                 conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-                allocatedPods: 2,
+                allocatedPods: 1,
               },
             },
             {
@@ -601,10 +566,19 @@ export const lessonResourceLimits: Lesson = {
         };
       },
       goalCheck: (state) => {
-        return state.deployments.every((dep) => {
-          const readyReplicas = dep.status.readyReplicas || 0;
-          return readyReplicas >= dep.spec.replicas;
-        });
+        const describedPod = (state._commandsUsed ?? []).includes('describe-pod');
+        const applied = (state._commandsUsed ?? []).includes('apply');
+        const dep = state.deployments.find(d => d.metadata.name === 'hungry-app');
+        const hasResources = !!dep && !!dep.spec.template.spec.resources?.requests;
+        const allRunning = !!dep && state.pods.filter(p =>
+          !p.metadata.deletionTimestamp &&
+          p.status.phase === 'Running' &&
+          state.replicaSets.some(rs =>
+            rs.metadata.ownerReference?.uid === dep.metadata.uid &&
+            rs.metadata.uid === p.metadata.ownerReference?.uid
+          )
+        ).length >= dep.spec.replicas;
+        return describedPod && applied && hasResources && allRunning;
       },
     },
   ],

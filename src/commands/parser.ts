@@ -557,6 +557,50 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
     resourceType = normalizedType;
     idx++;
 
+    // Handle secret/configmap subtypes: "create secret generic <name>" or "create secret docker-registry <name>"
+    const SECRET_SUBTYPES = ['generic', 'docker-registry', 'tls'];
+    if (action === 'create' && resourceType === 'secret' && idx < parts.length && SECRET_SUBTYPES.includes(parts[idx].toLowerCase())) {
+      const subtype = parts[idx].toLowerCase();
+      idx++;
+      // Store subtype for executor to use
+      if (idx < parts.length && !parts[idx].startsWith('--')) {
+        resourceName = parts[idx];
+        idx++;
+      }
+      // Parse flags with subtype stored
+      const flags: Record<string, string> = { _secretSubtype: subtype };
+      const fromLiterals: string[] = [];
+      while (idx < parts.length) {
+        const part = parts[idx];
+        if (part.startsWith('--')) {
+          const flagPart = part.substring(2);
+          if (flagPart.includes('=')) {
+            const [key, ...rest] = flagPart.split('=');
+            if (key === 'from-literal') {
+              fromLiterals.push(rest.join('='));
+            } else {
+              flags[key] = rest.join('=');
+            }
+          } else {
+            if (idx + 1 < parts.length && !parts[idx + 1].startsWith('--') && !parts[idx + 1].startsWith('-')) {
+              flags[flagPart] = parts[idx + 1];
+              idx++;
+            } else {
+              flags[flagPart] = 'true';
+            }
+          }
+        } else if (part === '-o' && idx + 1 < parts.length) {
+          flags['o'] = parts[idx + 1];
+          idx++;
+        }
+        idx++;
+      }
+      if (fromLiterals.length > 0) {
+        flags['_from-literals'] = JSON.stringify(fromLiterals);
+      }
+      return { action, resourceType, resourceName, flags };
+    }
+
     // Next non-flag token is the resource name
     if (idx < parts.length && !parts[idx].startsWith('--')) {
       resourceName = parts[idx];
@@ -564,15 +608,20 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
     }
   }
 
-  // Parse flags
+  // Parse flags (accumulate multiple --from-literal into array)
   const flags: Record<string, string> = {};
+  const fromLiterals: string[] = [];
   while (idx < parts.length) {
     const part = parts[idx];
     if (part.startsWith('--')) {
       const flagPart = part.substring(2);
       if (flagPart.includes('=')) {
         const [key, ...rest] = flagPart.split('=');
-        flags[key] = rest.join('=');
+        if (key === 'from-literal') {
+          fromLiterals.push(rest.join('='));
+        } else {
+          flags[key] = rest.join('=');
+        }
       } else {
         if (idx + 1 < parts.length && !parts[idx + 1].startsWith('--') && !parts[idx + 1].startsWith('-')) {
           flags[flagPart] = parts[idx + 1];
@@ -584,8 +633,16 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
     } else if (part === '-o' && idx + 1 < parts.length) {
       flags['o'] = parts[idx + 1];
       idx++;
+    } else if (part === '-n' && idx + 1 < parts.length) {
+      flags['namespace'] = parts[idx + 1];
+      idx++;
     }
     idx++;
+  }
+  if (fromLiterals.length > 0) {
+    flags['_from-literals'] = JSON.stringify(fromLiterals);
+  } else if (flags['from-literal']) {
+    // Backward compat: single --from-literal still works via legacy path
   }
 
   return { action, resourceType, resourceName, flags };

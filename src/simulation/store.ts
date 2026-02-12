@@ -1510,6 +1510,45 @@ function runPodLifecycle(cluster: ClusterState, lesson: Lesson | null, activeExe
       continue;
     }
 
+    // Liveness probe: restart pods that fail liveness checks after initialDelaySeconds
+    // Only active after startup probe passes (or if no startup probe)
+    if (pod.status.phase === 'Running' && pod.spec.livenessProbe && (!pod.spec.startupProbe || pod.status.startupProbeCompleted)) {
+      const probe = pod.spec.livenessProbe;
+      const delay = probe.initialDelaySeconds || 0;
+      const period = probe.periodSeconds || 10;
+      const failureThreshold = probe.failureThreshold || 3;
+      const age = currentTick - (pod.status.tickCreated || 0);
+      // After initial delay, check periodically
+      if (age > delay && (age - delay) % period === 0) {
+        // In the simulator, a pod "fails" liveness if it has a failureMode set
+        // This models real K8s where a crashing/unhealthy app fails the probe
+        if (pod.spec.failureMode) {
+          // Increment a liveness failure counter
+          const livenessFailures = ((pod.status as any)._livenessFailures || 0) + 1;
+          (pod.status as any)._livenessFailures = livenessFailures;
+          if (livenessFailures >= failureThreshold) {
+            // Restart the pod (like kubelet would)
+            pod.status.restartCount = (pod.status.restartCount || 0) + 1;
+            pod.status.phase = 'Pending';
+            pod.status.ready = false;
+            pod.status.tickCreated = currentTick;
+            (pod.status as any)._livenessFailures = 0;
+            if (!pod.spec.logs) pod.spec.logs = [];
+            pod.spec.logs.push(`[liveness-probe] Liveness probe failed ${failureThreshold} times — restarting container`);
+            events.push({
+              timestamp: Date.now(), tick: currentTick, type: 'Warning', reason: 'Unhealthy',
+              objectKind: 'Pod', objectName: pod.metadata.name,
+              message: `Liveness probe failed — container restarted (restart count: ${pod.status.restartCount})`,
+            });
+            continue;
+          }
+        } else {
+          // Probe passes — reset failure counter
+          (pod.status as any)._livenessFailures = 0;
+        }
+      }
+    }
+
     // Update readiness for running pods with readiness probes
     if (pod.status.phase === 'Running' && pod.spec.readinessProbe) {
       const delay = pod.spec.readinessProbe.initialDelaySeconds || 0;

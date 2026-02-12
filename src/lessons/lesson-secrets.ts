@@ -127,7 +127,7 @@ export const lessonSecrets: Lesson = {
       ],
       correctIndex: 2,
       explanation:
-        'This is the single most critical misconception about Kubernetes Secrets. By default, Secrets are stored as base64-encoded data in etcd, which provides zero cryptographic security. Running "echo cGFzc3dvcmQ= | base64 -d" instantly reveals the original value. To get actual encryption, you must configure envelope encryption at the API server level (EncryptionConfiguration) or use an external secrets manager like HashiCorp Vault. Option D is dangerously wrong -- etcd backups, compromised nodes, or misconfigured access can all expose raw etcd data.',
+        'This is the single most critical misconception about Kubernetes Secrets. By default, Secrets are stored as base64-encoded data in etcd, which provides zero cryptographic security. Running "echo cGFzc3dvcmQ= | base64 -d" instantly reveals the original value. To get actual encryption, you must configure envelope encryption at the API server level (EncryptionConfiguration) or use an external secrets manager like HashiCorp Vault. The idea that requiring cluster admin credentials for etcd access makes base64 an acceptable tradeoff is dangerously wrong -- etcd backups, compromised nodes, or misconfigured access can all expose raw etcd data.',
     },
     {
       question:
@@ -140,7 +140,7 @@ export const lessonSecrets: Lesson = {
       ],
       correctIndex: 3,
       explanation:
-        'Secrets provide three specific security advantages over ConfigMaps: (1) RBAC can restrict Secret access separately, so a service account might read ConfigMaps but not Secrets; (2) when mounted as volumes, Secrets use tmpfs (memory-backed filesystem), so they are never written to the node\'s disk -- ConfigMaps are written to disk; (3) Secrets can be configured for encryption at rest via EncryptionConfiguration. Secrets are NOT automatically encrypted (Option B is wrong) and are NOT automatically rotated (Option C is wrong). They are a better-but-not-perfect solution for sensitive data.',
+        'Secrets provide three specific security advantages over ConfigMaps: (1) RBAC can restrict Secret access separately, so a service account might read ConfigMaps but not Secrets; (2) when mounted as volumes, Secrets use tmpfs (memory-backed filesystem), so they are never written to the node\'s disk -- ConfigMaps are written to disk; (3) Secrets can be configured for encryption at rest via EncryptionConfiguration. Secrets are NOT automatically encrypted at rest by default, and they are NOT automatically rotated on a schedule. They are a better-but-not-perfect solution for sensitive data.',
     },
     {
       question:
@@ -166,7 +166,7 @@ export const lessonSecrets: Lesson = {
       ],
       correctIndex: 0,
       explanation:
-        'Environment variables are part of the process environment and can leak through /proc/*/environ, crash dumps, "docker inspect", and application logs that dump env vars. Volume-mounted Secrets avoid this because the data lives in a tmpfs file, not in the process environment. The application reads the file on demand rather than having the value injected into its memory space at startup. Encryption at rest (Option B) protects data in etcd, not in the running container. Making a Secret immutable (Option C) prevents updates but does not affect crash dump behavior.',
+        'Environment variables are part of the process environment and can leak through /proc/*/environ, crash dumps, "docker inspect", and application logs that dump env vars. Volume-mounted Secrets avoid this because the data lives in a tmpfs file, not in the process environment. The application reads the file on demand rather than having the value injected into its memory space at startup. Enabling encryption at rest protects data in etcd, not in the running container. Setting a Secret to "immutable: true" prevents updates but does not affect crash dump behavior.',
     },
     {
       question:

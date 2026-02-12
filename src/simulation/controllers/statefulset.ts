@@ -128,7 +128,7 @@ export function reconcileStatefulSets(state: ClusterState): ReconcileResult {
         !p.metadata.deletionTimestamp
     );
     const readyPods = nonTerminatingPods.filter(
-      (p) => p.status.phase === 'Running'
+      (p) => p.status.phase === 'Running' && p.status.ready !== false
     );
     sts.status = {
       replicas: nonTerminatingPods.length,

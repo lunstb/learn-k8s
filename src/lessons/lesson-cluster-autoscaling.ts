@@ -9,10 +9,10 @@ export const lessonClusterAutoscaling: Lesson = {
     'When pods cannot be scheduled due to insufficient node capacity, cluster autoscalers like Karpenter automatically provision new nodes.',
   mode: 'full',
   goalDescription:
-    'Some "web" pods are Pending/Unschedulable because the cluster lacks node capacity. Reconcile to let Karpenter automatically provision new nodes, then verify all 5 "web" pods are Running.',
+    'Scale the "web" deployment to 5 replicas to exceed cluster capacity. Watch Karpenter automatically provision new nodes for the Pending pods, then verify all 5 pods are Running.',
   successMessage:
-    'Karpenter provisioned new nodes to handle the Unschedulable pods. Cluster autoscaling completes the scaling story: ' +
-    'HPA scales pods, Karpenter scales nodes. Together they handle demand at every level.',
+    'Karpenter provisioned new nodes to handle the Unschedulable pods you caused by scaling up. ' +
+    'This is the HPA-to-Karpenter pipeline: pod demand exceeds node capacity, and the cluster auto-scales to match.',
   lecture: {
     sections: [
       {
@@ -174,28 +174,36 @@ export const lessonClusterAutoscaling: Lesson = {
   ],
   practices: [
     {
-      title: 'Observe Node Autoscaling',
+      title: 'Trigger and Observe Node Autoscaling',
       goalDescription:
-        'Some "web" pods are Pending/Unschedulable because the cluster lacks node capacity. Reconcile to let Karpenter automatically provision new nodes, then verify all 5 "web" pods are Running.',
+        'A deployment "web" has 2 replicas running on 2 nodes (each with capacity for 2 pods). ' +
+        'Scale the deployment to 5 replicas to exceed cluster capacity. Watch Karpenter automatically ' +
+        'provision new nodes for the Pending pods, then verify all 5 pods are Running.',
       successMessage:
-        'Karpenter provisioned new nodes to handle the Unschedulable pods. Cluster autoscaling completes the scaling story: ' +
-        'HPA scales pods, Karpenter scales nodes. Together they handle demand at every level.',
+        'Karpenter provisioned new nodes to handle the Unschedulable pods you caused by scaling up. ' +
+        'This is the HPA-to-Karpenter pipeline in action: pod demand exceeds node capacity, and the cluster ' +
+        'auto-scales to match. Together, HPA scales pods and Karpenter scales nodes.',
       hints: [
-        { text: 'Check kubectl get pods — some pods are Pending because no node has capacity.' },
-        { text: 'Karpenter watches for Unschedulable pods and provisions new nodes automatically.' },
-        { text: 'Just keep reconciling — Karpenter will add a node and the scheduler will assign pods to it.' },
+        { text: 'Run "kubectl get nodes" to see the current 2 nodes and their capacity.' },
+        { text: 'kubectl scale deployment web --replicas=5', exact: true },
+        { text: 'Run "kubectl get pods" — you should see 3 Pending pods. Reconcile to let Karpenter provision new nodes.' },
+        { text: 'Keep reconciling — Karpenter adds nodes for Unschedulable pods, and the scheduler places them.' },
       ],
       goals: [
         {
-          description: 'Use "kubectl get pods" to check pod status',
+          description: 'Use "kubectl get nodes" to see current cluster capacity',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-nodes'),
+        },
+        {
+          description: 'Scale deployment to trigger Pending pods',
+          check: (s: ClusterState) => (s._commandsUsed ?? []).includes('scale'),
+        },
+        {
+          description: 'Use "kubectl get pods" to observe Pending pods',
           check: (s: ClusterState) => (s._commandsUsed ?? []).includes('get-pods'),
         },
         {
-          description: 'Karpenter provisions a new node for Unschedulable pods',
-          check: (s: ClusterState) => s.nodes.length > 1,
-        },
-        {
-          description: 'All 5 "web" pods are Running',
+          description: 'All 5 "web" pods are Running (Karpenter provisioned nodes)',
           check: (s: ClusterState) => {
             return s.pods.filter(p => p.metadata.labels['app'] === 'web' && p.status.phase === 'Running' && !p.metadata.deletionTimestamp).length >= 5;
           },
@@ -207,26 +215,25 @@ export const lessonClusterAutoscaling: Lesson = {
         const image = 'web-app:1.0';
         const hash = templateHash({ image });
 
-        // 1 node with capacity 3
-        const nodes = [
-          {
-            kind: 'Node' as const,
-            metadata: {
-              name: 'node-1',
-              uid: generateUID(),
-              labels: { 'kubernetes.io/hostname': 'node-1' },
-              creationTimestamp: Date.now() - 300000,
-            },
-            spec: { capacity: { pods: 3 } },
-            status: {
-              conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
-              allocatedPods: 3,
-            },
+        // 2 nodes with capacity 2 each
+        const nodeNames = ['node-1', 'node-2'];
+        const nodes = nodeNames.map((name) => ({
+          kind: 'Node' as const,
+          metadata: {
+            name,
+            uid: generateUID(),
+            labels: { 'kubernetes.io/hostname': name },
+            creationTimestamp: Date.now() - 300000,
           },
-        ];
+          spec: { capacity: { pods: 2 } },
+          status: {
+            conditions: [{ type: 'Ready' as const, status: 'True' as const }] as [{ type: 'Ready'; status: 'True' | 'False' }],
+            allocatedPods: 1,
+          },
+        }));
 
-        // 5 pods desired: 3 Running on node-1, 2 Pending/Unschedulable
-        const runningPods = Array.from({ length: 3 }, () => ({
+        // 2 Running pods, one per node
+        const pods = nodeNames.map((nodeName) => ({
           kind: 'Pod' as const,
           metadata: {
             name: generatePodName(`web-${hash.slice(0, 10)}`),
@@ -239,29 +246,12 @@ export const lessonClusterAutoscaling: Lesson = {
             },
             creationTimestamp: Date.now() - 60000,
           },
-          spec: { image, nodeName: 'node-1' },
+          spec: { image, nodeName },
           status: { phase: 'Running' as const },
         }));
 
-        const pendingPods = Array.from({ length: 2 }, () => ({
-          kind: 'Pod' as const,
-          metadata: {
-            name: generatePodName(`web-${hash.slice(0, 10)}`),
-            uid: generateUID(),
-            labels: { app: 'web', 'pod-template-hash': hash },
-            ownerReference: {
-              kind: 'ReplicaSet',
-              name: `web-${hash.slice(0, 10)}`,
-              uid: rsUid,
-            },
-            creationTimestamp: Date.now() - 30000,
-          },
-          spec: { image },
-          status: { phase: 'Pending' as const, reason: 'Unschedulable', message: 'No nodes with available capacity' },
-        }));
-
         return {
-          pods: [...runningPods, ...pendingPods],
+          pods,
           replicaSets: [
             {
               kind: 'ReplicaSet' as const,
@@ -277,14 +267,14 @@ export const lessonClusterAutoscaling: Lesson = {
                 creationTimestamp: Date.now() - 120000,
               },
               spec: {
-                replicas: 5,
+                replicas: 2,
                 selector: { app: 'web', 'pod-template-hash': hash },
                 template: {
                   labels: { app: 'web', 'pod-template-hash': hash },
                   spec: { image },
                 },
               },
-              status: { replicas: 5, readyReplicas: 3 },
+              status: { replicas: 2, readyReplicas: 2 },
             },
           ],
           deployments: [
@@ -297,7 +287,7 @@ export const lessonClusterAutoscaling: Lesson = {
                 creationTimestamp: Date.now() - 120000,
               },
               spec: {
-                replicas: 5,
+                replicas: 2,
                 selector: { app: 'web' },
                 template: {
                   labels: { app: 'web' },
@@ -306,27 +296,17 @@ export const lessonClusterAutoscaling: Lesson = {
                 strategy: { type: 'RollingUpdate' as const, maxSurge: 1, maxUnavailable: 1 },
               },
               status: {
-                replicas: 5,
-                updatedReplicas: 5,
-                readyReplicas: 3,
-                availableReplicas: 3,
-                conditions: [{ type: 'Progressing', status: 'True', reason: 'ReplicaSetUpdated' }],
+                replicas: 2,
+                updatedReplicas: 2,
+                readyReplicas: 2,
+                availableReplicas: 2,
+                conditions: [{ type: 'Available', status: 'True' }],
               },
             },
           ],
           nodes,
           services: [],
-          events: [
-            {
-              timestamp: Date.now() - 30000,
-              tick: 0,
-              type: 'Warning' as const,
-              reason: 'FailedScheduling',
-              objectKind: 'Pod',
-              objectName: pendingPods[0]?.metadata.name || 'web-pod',
-              message: 'No nodes with available capacity. 0/1 nodes are available: 1 node has reached pod limit.',
-            },
-          ],
+          events: [],
           namespaces: [],
           configMaps: [],
           secrets: [],
