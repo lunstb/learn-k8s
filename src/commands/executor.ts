@@ -753,9 +753,21 @@ function handleGet(cmd: ParsedCommand): string[] {
   }
 
   if (cmd.resourceType === 'pod') {
-    const podList = cmd.resourceName
+    let podList = cmd.resourceName
       ? store.cluster.pods.filter((p) => p.metadata.name === cmd.resourceName)
       : store.cluster.pods.filter((p) => !p.metadata.deletionTimestamp);
+    // Apply label selector filtering (-l / --selector)
+    const selectorStr = cmd.flags['selector'] || '';
+    if (selectorStr) {
+      const selector: Record<string, string> = {};
+      for (const pair of selectorStr.split(',')) {
+        const eqIdx = pair.indexOf('=');
+        if (eqIdx > 0) {
+          selector[pair.substring(0, eqIdx)] = pair.substring(eqIdx + 1);
+        }
+      }
+      podList = podList.filter((p) => labelsMatch(selector, p.metadata.labels));
+    }
     if (cmd.resourceName && podList.length === 0) {
       return [`Error: pod "${cmd.resourceName}" not found`];
     }
@@ -1572,7 +1584,8 @@ function handleDescribe(cmd: ParsedCommand): string[] {
     return [
       `Name:          ${svc.metadata.name}`,
       `Selector:      ${Object.entries(svc.spec.selector).map(([k, v]) => `${k}=${v}`).join(', ')}`,
-      `Port:          ${svc.spec.port}`,
+      `Port:          ${svc.spec.port}${svc.spec.targetPort ? `/${svc.spec.targetPort}` : ''}`,
+      ...(svc.spec.targetPort ? [`TargetPort:     ${svc.spec.targetPort}`] : []),
       `Endpoints:     ${svc.status.endpoints.join(', ') || '<none>'}`,
       ...(eventLines.length > 0 ? ['Events:', ...eventLines] : []),
     ];
@@ -2235,7 +2248,9 @@ function applyService(doc: Record<string, unknown>, name: string): string[] {
   const existing = store.cluster.services.find((s) => s.metadata.name === name);
   const spec = doc.spec as Record<string, unknown> || {};
   const selectorObj = spec.selector as Record<string, string> || {};
-  const port = spec.port ? Number(spec.port) : (spec.ports as Array<Record<string, unknown>>)?.[0]?.port ? Number((spec.ports as Array<Record<string, unknown>>)[0].port) : 80;
+  const portsArr = spec.ports as Array<Record<string, unknown>> | undefined;
+  const port = spec.port ? Number(spec.port) : portsArr?.[0]?.port ? Number(portsArr[0].port) : 80;
+  const targetPort = portsArr?.[0]?.targetPort ? Number(portsArr[0].targetPort) : undefined;
 
   if (existing) {
     // Update selector and port
@@ -2244,7 +2259,7 @@ function applyService(doc: Record<string, unknown>, name: string): string[] {
   const svc: Service = {
     kind: 'Service',
     metadata: { name, uid: generateUID(), labels: {}, creationTimestamp: Date.now() },
-    spec: { selector: selectorObj, port },
+    spec: { selector: selectorObj, port, ...(targetPort !== undefined && { targetPort }) },
     status: { endpoints: [] },
   };
   store.addService(svc);

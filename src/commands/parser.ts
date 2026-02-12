@@ -601,8 +601,8 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
       return { action, resourceType, resourceName, flags };
     }
 
-    // Next non-flag token is the resource name
-    if (idx < parts.length && !parts[idx].startsWith('--')) {
+    // Next non-flag token is the resource name (skip short flags like -l, -o, -n)
+    if (idx < parts.length && !parts[idx].startsWith('--') && !parts[idx].startsWith('-')) {
       resourceName = parts[idx];
       idx++;
     }
@@ -636,6 +636,13 @@ export function parseCommand(input: string): ParsedCommand | { error: string } {
     } else if (part === '-n' && idx + 1 < parts.length) {
       flags['namespace'] = parts[idx + 1];
       idx++;
+    } else if (part === '-l' && idx + 1 < parts.length) {
+      flags['selector'] = parts[idx + 1];
+      idx++;
+    } else if (part.startsWith('-l=')) {
+      flags['selector'] = part.substring(3);
+    } else if (part === '-A') {
+      flags['all-namespaces'] = 'true';
     }
     idx++;
   }
